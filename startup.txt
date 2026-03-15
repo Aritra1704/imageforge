@@ -1,0 +1,2 @@
+./scripts/setup_db.sh
+./scripts/run_local.sh
