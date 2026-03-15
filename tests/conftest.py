@@ -59,16 +59,43 @@ class InMemoryRepository:
             "theme_name": payload["theme_name"],
             "theme_bucket": payload["theme_bucket"],
             "cultural_context": payload.get("cultural_context"),
-            "selected_text": payload["selected_text"],
+            "selected_text": payload.get("selected_text"),
+            "workflow_type": payload["workflow_type"],
+            "asset_type": payload["asset_type"],
+            "style_profile": payload["style_profile"],
+            "scene_spec": payload.get("scene_spec"),
+            "render_spec": payload.get("render_spec"),
             "tone_style": payload.get("tone_style"),
             "visual_style": payload.get("visual_style"),
-            "cards_per_theme": payload["cards_per_theme"],
-            "image_candidates_per_run": payload["image_candidates_per_run"],
+            "candidate_count": payload["candidate_count"],
             "notes": payload.get("notes"),
+            "status": "queued",
+            "stage": "accepted",
+            "progress_pct": 0,
+            "started_at": None,
+            "finished_at": None,
             "request_payload_json": payload,
             "created_at": _utcnow(),
         }
         self.requests[request_id] = row
+        return row
+
+    def update_request_progress(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        stage: str,
+        progress_pct: int,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> dict[str, Any]:
+        row = self.requests[request_id]
+        row["status"] = status
+        row["stage"] = stage
+        row["progress_pct"] = progress_pct
+        row["started_at"] = started_at or row.get("started_at")
+        row["finished_at"] = finished_at
         return row
 
     def get_request(self, request_id: str) -> dict[str, Any] | None:
@@ -115,10 +142,17 @@ class InMemoryRepository:
                     "theme_name": row["theme_name"],
                     "theme_bucket": row["theme_bucket"],
                     "cultural_context": row.get("cultural_context"),
-                    "cards_per_theme": row["cards_per_theme"],
-                    "image_candidates_per_run": row["image_candidates_per_run"],
+                    "workflow_type": row.get("workflow_type"),
+                    "asset_type": row.get("asset_type"),
+                    "style_profile": row.get("style_profile"),
+                    "requested_candidate_count": row.get("candidate_count"),
+                    "status": row.get("status", "queued"),
+                    "stage": row.get("stage", "accepted"),
+                    "progress_pct": row.get("progress_pct", 0),
+                    "started_at": row.get("started_at"),
+                    "finished_at": row.get("finished_at"),
                     "created_at": row["created_at"],
-                    "candidate_count": len(candidates),
+                    "generated_candidate_count": len(candidates),
                     "selected_candidate_id": selected["candidate_id"] if selected else None,
                     "selected_candidate_url": selected["public_url"] if selected else None,
                     "providers": sorted({run["provider"] for run in runs}),
@@ -129,6 +163,48 @@ class InMemoryRepository:
     def create_provider_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         row = {**payload, "created_at": _utcnow()}
         self.provider_runs[payload["provider_run_id"]] = row
+        return row
+
+    def update_provider_run(
+        self,
+        provider_run_id: str,
+        *,
+        provider: str,
+        model: str | None,
+        workflow_name: str | None,
+        prompt_used: str,
+        negative_prompt_used: str,
+        latency_ms: int | None,
+        ok: bool,
+        error_type: str | None,
+        error_message: str | None,
+        raw_response_json: dict[str, Any] | None,
+        status: str,
+        stage: str,
+        progress_pct: int,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> dict[str, Any]:
+        row = self.provider_runs[provider_run_id]
+        row.update(
+            {
+                "provider": provider,
+                "model": model,
+                "workflow_name": workflow_name,
+                "prompt_used": prompt_used,
+                "negative_prompt_used": negative_prompt_used,
+                "latency_ms": latency_ms,
+                "ok": ok,
+                "error_type": error_type,
+                "error_message": error_message,
+                "raw_response_json": raw_response_json,
+                "status": status,
+                "stage": stage,
+                "progress_pct": progress_pct,
+                "started_at": started_at or row.get("started_at"),
+                "finished_at": finished_at,
+            }
+        )
         return row
 
     def list_provider_runs(self, request_id: str) -> list[dict[str, Any]]:
@@ -188,6 +264,7 @@ class MockProvider(ImageProvider):
     async def generate_candidates(
         self, request: ProviderRequestContext, prompt_bundle
     ) -> ProviderRunResult:
+        started_at = _utcnow()
         self.call_counts[request.request_id] += 1
         batch_index = self.call_counts[request.request_id]
         candidates = [
@@ -207,6 +284,11 @@ class MockProvider(ImageProvider):
             ok=True,
             candidates=candidates,
             raw_response={"mocked": True, "candidate_count": len(candidates)},
+            status="completed",
+            stage="completed",
+            progress_pct=100,
+            started_at=started_at,
+            finished_at=_utcnow(),
         )
 
     async def health_check(self) -> bool:
@@ -285,10 +367,23 @@ def sample_generate_payload() -> dict[str, Any]:
         "theme_bucket": "occasion",
         "cultural_context": "indian",
         "selected_text": "Happy Ugadi. Wishing you prosperity, joy and new beginnings.",
+        "workflow_type": "supporting_scene",
+        "asset_type": "hero_illustration",
+        "style_profile": "soft_color_illustration",
+        "scene_spec": {
+            "subject": "banyan tree courtyard scene",
+            "composition": "supporting scene",
+            "background_intent": "festive South Indian details",
+        },
+        "render_spec": {
+            "width": 768,
+            "height": 1152,
+            "orientation": "portrait",
+            "quality_profile": "draft",
+        },
         "tone_style": "warm",
         "visual_style": "festive",
-        "cards_per_theme": 10,
-        "image_candidates_per_run": 3,
+        "candidate_count": 3,
         "provider_targets": [{"provider": "comfyui", "model": "sd_xl_base_1.0"}],
         "trace_id": "ecard-job-001",
     }

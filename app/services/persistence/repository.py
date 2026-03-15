@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+import json
 from typing import Any, Iterator, Protocol
 
 import psycopg
@@ -11,12 +12,32 @@ from psycopg.types.json import Jsonb
 from app.errors import NotFoundError
 
 
+def _spec_column_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
 class RepositoryProtocol(Protocol):
     def health_check(self) -> bool: ...
 
     def readiness_check(self) -> dict[str, bool]: ...
 
     def create_request(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    def update_request_progress(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        stage: str,
+        progress_pct: int,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> dict[str, Any]: ...
 
     def get_request(self, request_id: str) -> dict[str, Any] | None: ...
 
@@ -33,6 +54,27 @@ class RepositoryProtocol(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     def create_provider_run(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    def update_provider_run(
+        self,
+        provider_run_id: str,
+        *,
+        provider: str,
+        model: str | None,
+        workflow_name: str | None,
+        prompt_used: str,
+        negative_prompt_used: str,
+        latency_ms: int | None,
+        ok: bool,
+        error_type: str | None,
+        error_message: str | None,
+        raw_response_json: dict[str, Any] | None,
+        status: str,
+        stage: str,
+        progress_pct: int,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> dict[str, Any]: ...
 
     def list_provider_runs(self, request_id: str) -> list[dict[str, Any]]: ...
 
@@ -111,14 +153,25 @@ class PostgresImageRepository:
                 theme_bucket,
                 cultural_context,
                 selected_text,
+                workflow_type,
+                asset_type,
+                style_profile,
+                scene_spec,
+                render_spec,
                 tone_style,
                 visual_style,
                 cards_per_theme,
                 image_candidates_per_run,
+                candidate_count,
                 notes,
-                request_payload_json
+                request_payload_json,
+                status,
+                stage,
+                progress_pct,
+                started_at,
+                finished_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             RETURNING *
         """
@@ -131,13 +184,57 @@ class PostgresImageRepository:
                     payload["theme_name"],
                     payload["theme_bucket"],
                     payload.get("cultural_context"),
-                    payload["selected_text"],
+                    payload.get("selected_text") or "",
+                    payload.get("workflow_type"),
+                    payload.get("asset_type"),
+                    payload.get("style_profile"),
+                    _spec_column_value(payload.get("scene_spec")),
+                    _spec_column_value(payload.get("render_spec")),
                     payload.get("tone_style"),
                     payload.get("visual_style"),
-                    payload["cards_per_theme"],
-                    payload["image_candidates_per_run"],
+                    payload.get("cards_per_theme", 1),
+                    payload.get("image_candidates_per_run", payload["candidate_count"]),
+                    payload["candidate_count"],
                     payload.get("notes"),
                     Jsonb(payload),
+                    "queued",
+                    "accepted",
+                    0,
+                    None,
+                    None,
+                ),
+            ).fetchone()
+
+    def update_request_progress(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        stage: str,
+        progress_pct: int,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> dict[str, Any]:
+        query = """
+            UPDATE imageforge.image_requests
+            SET status = %s,
+                stage = %s,
+                progress_pct = %s,
+                started_at = COALESCE(%s, started_at),
+                finished_at = %s
+            WHERE request_id = %s
+            RETURNING *
+        """
+        with self._connect() as conn:
+            return conn.execute(
+                query,
+                (
+                    status,
+                    stage,
+                    progress_pct,
+                    started_at,
+                    finished_at,
+                    request_id,
                 ),
             ).fetchone()
 
@@ -198,10 +295,17 @@ class PostgresImageRepository:
                 r.theme_name,
                 r.theme_bucket,
                 r.cultural_context,
-                r.cards_per_theme,
-                r.image_candidates_per_run,
+                r.workflow_type,
+                r.asset_type,
+                r.style_profile,
+                r.candidate_count AS requested_candidate_count,
+                r.status,
+                r.stage,
+                r.progress_pct,
+                r.started_at,
+                r.finished_at,
                 r.created_at,
-                COALESCE(cand.candidate_count, 0) AS candidate_count,
+                COALESCE(cand.generated_candidate_count, 0) AS generated_candidate_count,
                 cand.selected_candidate_id,
                 cand.selected_candidate_url,
                 COALESCE(runs.providers, '{{}}') AS providers
@@ -209,7 +313,7 @@ class PostgresImageRepository:
             LEFT JOIN (
                 SELECT
                     request_id,
-                    COUNT(*) AS candidate_count,
+                    COUNT(*) AS generated_candidate_count,
                     MAX(CASE WHEN is_selected THEN candidate_id END) AS selected_candidate_id,
                     MAX(CASE WHEN is_selected THEN public_url END) AS selected_candidate_url
                 FROM imageforge.image_candidates
@@ -248,9 +352,14 @@ class PostgresImageRepository:
                 ok,
                 error_type,
                 error_message,
-                raw_response_json
+                raw_response_json,
+                status,
+                stage,
+                progress_pct,
+                started_at,
+                finished_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             RETURNING *
         """
@@ -272,6 +381,74 @@ class PostgresImageRepository:
                     Jsonb(payload["raw_response_json"])
                     if payload.get("raw_response_json") is not None
                     else None,
+                    payload.get("status", "queued"),
+                    payload.get("stage", "queued"),
+                    payload.get("progress_pct", 0),
+                    payload.get("started_at"),
+                    payload.get("finished_at"),
+                ),
+            ).fetchone()
+
+    def update_provider_run(
+        self,
+        provider_run_id: str,
+        *,
+        provider: str,
+        model: str | None,
+        workflow_name: str | None,
+        prompt_used: str,
+        negative_prompt_used: str,
+        latency_ms: int | None,
+        ok: bool,
+        error_type: str | None,
+        error_message: str | None,
+        raw_response_json: dict[str, Any] | None,
+        status: str,
+        stage: str,
+        progress_pct: int,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> dict[str, Any]:
+        query = """
+            UPDATE imageforge.image_provider_runs
+            SET provider = %s,
+                model = %s,
+                workflow_name = %s,
+                prompt_used = %s,
+                negative_prompt_used = %s,
+                latency_ms = %s,
+                ok = %s,
+                error_type = %s,
+                error_message = %s,
+                raw_response_json = %s,
+                status = %s,
+                stage = %s,
+                progress_pct = %s,
+                started_at = COALESCE(%s, started_at),
+                finished_at = %s
+            WHERE provider_run_id = %s
+            RETURNING *
+        """
+        with self._connect() as conn:
+            return conn.execute(
+                query,
+                (
+                    provider,
+                    model,
+                    workflow_name,
+                    prompt_used,
+                    negative_prompt_used,
+                    latency_ms,
+                    ok,
+                    error_type,
+                    error_message,
+                    Jsonb(raw_response_json) if raw_response_json is not None else None,
+                    status,
+                    stage,
+                    progress_pct,
+                    started_at,
+                    finished_at,
+                    provider_run_id,
                 ),
             ).fetchone()
 

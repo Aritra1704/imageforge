@@ -7,11 +7,22 @@ CREATE TABLE IF NOT EXISTS imageforge.image_requests (
     theme_bucket TEXT NOT NULL,
     cultural_context TEXT NULL,
     selected_text TEXT NOT NULL,
+    workflow_type TEXT NULL,
+    asset_type TEXT NULL,
+    style_profile TEXT NULL,
+    scene_spec TEXT NULL,
+    render_spec TEXT NULL,
     tone_style TEXT NULL,
     visual_style TEXT NULL,
     cards_per_theme INTEGER NOT NULL,
     image_candidates_per_run INTEGER NOT NULL,
+    candidate_count INTEGER NULL,
     notes TEXT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    stage TEXT NOT NULL DEFAULT 'accepted',
+    progress_pct INTEGER NOT NULL DEFAULT 0,
+    started_at TIMESTAMPTZ NULL,
+    finished_at TIMESTAMPTZ NULL,
     request_payload_json JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -29,6 +40,11 @@ CREATE TABLE IF NOT EXISTS imageforge.image_provider_runs (
     error_type TEXT NULL,
     error_message TEXT NULL,
     raw_response_json JSONB NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    stage TEXT NOT NULL DEFAULT 'queued',
+    progress_pct INTEGER NOT NULL DEFAULT 0,
+    started_at TIMESTAMPTZ NULL,
+    finished_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -74,6 +90,40 @@ CREATE TABLE IF NOT EXISTS imageforge.image_prompt_history (
     quality_label TEXT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS workflow_type TEXT NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS asset_type TEXT NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS style_profile TEXT NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS scene_spec TEXT NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS render_spec TEXT NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS candidate_count INTEGER NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'queued';
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'accepted';
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS progress_pct INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ NULL;
+
+ALTER TABLE imageforge.image_provider_runs
+    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'queued';
+ALTER TABLE imageforge.image_provider_runs
+    ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'queued';
+ALTER TABLE imageforge.image_provider_runs
+    ADD COLUMN IF NOT EXISTS progress_pct INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE imageforge.image_provider_runs
+    ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NULL;
+ALTER TABLE imageforge.image_provider_runs
+    ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ NULL;
 
 CREATE INDEX IF NOT EXISTS idx_image_requests_created_at
     ON imageforge.image_requests (created_at DESC);

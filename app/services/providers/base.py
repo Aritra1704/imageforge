@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime
+from typing import Any, Mapping
 
 from app.schemas import PromptBundle
 
@@ -14,10 +15,14 @@ class ProviderRequestContext:
     theme_name: str
     theme_bucket: str
     cultural_context: str | None
-    selected_text: str
+    selected_text: str | None
+    workflow_type: str
+    asset_type: str
+    style_profile: str
+    scene_spec: Mapping[str, Any] | str | None
+    render_spec: Mapping[str, Any] | str | None
     tone_style: str | None
     visual_style: str | None
-    cards_per_theme: int
     candidate_count: int
     notes: str | None
     target_model: str | None = None
@@ -42,6 +47,11 @@ class ProviderRunResult:
     error_type: str | None = None
     error_message: str | None = None
     raw_response: dict[str, Any] | None = None
+    status: str = "completed"
+    stage: str = "completed"
+    progress_pct: int = 100
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class ImageProvider(ABC):

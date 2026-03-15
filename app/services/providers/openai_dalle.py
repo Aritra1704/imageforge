@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.schemas import PromptBundle
 from app.services.providers.base import (
     ImageProvider,
@@ -14,6 +16,7 @@ class OpenAIDalleProvider(ImageProvider):
     async def generate_candidates(
         self, request: ProviderRequestContext, prompt_bundle: PromptBundle
     ) -> ProviderRunResult:
+        now = datetime.now(timezone.utc)
         return ProviderRunResult(
             provider=self.name,
             model=request.target_model or "gpt-image-1",
@@ -25,6 +28,11 @@ class OpenAIDalleProvider(ImageProvider):
             error_type="not_implemented",
             error_message="OpenAI DALL-E provider is scaffolded but not implemented in v1.",
             raw_response={"status": "not_implemented"},
+            status="failed",
+            stage="failed",
+            progress_pct=100,
+            started_at=now,
+            finished_at=now,
         )
 
     async def health_check(self) -> bool:

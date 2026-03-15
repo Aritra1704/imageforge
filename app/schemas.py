@@ -3,14 +3,94 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 
 ProviderName = Literal["comfyui", "openai_dalle"]
+WorkflowType = Literal[
+    "ecard_background",
+    "ecard_border_frame",
+    "festival_motif_pack",
+    "hero_illustration",
+    "supporting_scene",
+    "bw_sketch_asset",
+]
+AssetType = Literal[
+    "background_full",
+    "border_frame",
+    "hero_illustration",
+    "corner_decoration",
+    "object_pack",
+    "festival_motif",
+]
+StyleProfile = Literal[
+    "draft_sketch",
+    "bw_line_art",
+    "flat_illustration",
+    "soft_color_illustration",
+    "premium_render",
+]
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class FlexibleSpecModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    @model_serializer(mode="plain")
+    def _serialize(self) -> dict[str, Any]:
+        data = {key: value for key, value in self.__dict__.items() if value is not None}
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        for key, value in extra.items():
+            if value is not None:
+                data[key] = value
+        return data
+
+
+class SceneSpec(FlexibleSpecModel):
+    subject: str | None = None
+    composition: str | None = None
+    background_intent: str | None = None
+    environment: str | None = None
+    lighting: str | None = None
+    palette: str | None = None
+
+    @field_validator(
+        "subject",
+        "composition",
+        "background_intent",
+        "environment",
+        "lighting",
+        "palette",
+        mode="before",
+    )
+    @classmethod
+    def _strip_scene_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class RenderSpec(FlexibleSpecModel):
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    orientation: str | None = None
+    quality_profile: str | None = None
+
+    @field_validator("orientation", "quality_profile", mode="before")
+    @classmethod
+    def _strip_render_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class ProviderTarget(StrictModel):
@@ -30,11 +110,15 @@ class GenerateImageRequest(StrictModel):
     theme_name: str = Field(min_length=1)
     theme_bucket: str = Field(min_length=1)
     cultural_context: str | None = None
-    selected_text: str = Field(min_length=1)
+    selected_text: str | None = None
+    workflow_type: WorkflowType
+    asset_type: AssetType
+    style_profile: StyleProfile
+    scene_spec: SceneSpec | str | None = None
+    render_spec: RenderSpec | str | None = None
     tone_style: str | None = None
     visual_style: str | None = None
-    cards_per_theme: int = Field(ge=1)
-    image_candidates_per_run: int = Field(ge=1)
+    candidate_count: int = Field(ge=1)
     provider_targets: list[ProviderTarget] = Field(default_factory=list)
     trace_id: str | None = None
     notes: str | None = None
@@ -44,6 +128,9 @@ class GenerateImageRequest(StrictModel):
         "theme_bucket",
         "cultural_context",
         "selected_text",
+        "workflow_type",
+        "asset_type",
+        "style_profile",
         "tone_style",
         "visual_style",
         "trace_id",
@@ -51,9 +138,11 @@ class GenerateImageRequest(StrictModel):
         mode="before",
     )
     @classmethod
-    def _strip_strings(cls, value: str | None) -> str | None:
+    def _strip_strings(cls, value: Any) -> Any:
         if value is None:
             return None
+        if not isinstance(value, str):
+            return value
         cleaned = value.strip()
         return cleaned or None
 
@@ -61,7 +150,7 @@ class GenerateImageRequest(StrictModel):
 class RegenerateImageRequest(StrictModel):
     request_id: str = Field(min_length=1)
     provider_targets: list[ProviderTarget] | None = None
-    image_candidates_per_run: int | None = Field(default=None, ge=1)
+    candidate_count: int | None = Field(default=None, ge=1)
     trace_id: str | None = None
 
     @field_validator("request_id", "trace_id", mode="before")
@@ -76,6 +165,14 @@ class RegenerateImageRequest(StrictModel):
 class PromptBundle(StrictModel):
     positive_prompt: str
     negative_prompt: str
+
+
+class ProgressFields(BaseModel):
+    status: str
+    stage: str
+    progress_pct: int = Field(ge=0, le=100)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class ErrorDetails(BaseModel):
@@ -109,7 +206,7 @@ class ProviderErrorResponse(BaseModel):
     message: str
 
 
-class ProviderExecutionResponse(BaseModel):
+class ProviderExecutionResponse(ProgressFields):
     provider: str
     model: str | None = None
     ok: bool
@@ -121,7 +218,7 @@ class ProviderExecutionResponse(BaseModel):
     error: ProviderErrorResponse | None = None
 
 
-class GenerationResponse(BaseModel):
+class GenerationResponse(ProgressFields):
     ok: bool
     request_id: str
     trace_id: str | None = None
@@ -129,23 +226,27 @@ class GenerationResponse(BaseModel):
     meta: dict[str, Any]
 
 
-class ImageRequestRecord(BaseModel):
+class ImageRequestRecord(ProgressFields):
     request_id: str
     trace_id: str | None = None
     theme_name: str
     theme_bucket: str
     cultural_context: str | None = None
-    selected_text: str
+    selected_text: str | None = None
+    workflow_type: WorkflowType | None = None
+    asset_type: AssetType | None = None
+    style_profile: StyleProfile | None = None
+    scene_spec: SceneSpec | str | None = None
+    render_spec: RenderSpec | str | None = None
     tone_style: str | None = None
     visual_style: str | None = None
-    cards_per_theme: int
-    image_candidates_per_run: int
+    candidate_count: int | None = None
     notes: str | None = None
     request_payload_json: dict[str, Any]
     created_at: datetime
 
 
-class ImageProviderRunRecord(BaseModel):
+class ImageProviderRunRecord(ProgressFields):
     provider_run_id: str
     request_id: str
     provider: str
@@ -197,16 +298,18 @@ class ImagePromptHistoryRecord(BaseModel):
     created_at: datetime
 
 
-class RequestSummaryRecord(BaseModel):
+class RequestSummaryRecord(ProgressFields):
     request_id: str
     trace_id: str | None = None
     theme_name: str
     theme_bucket: str
     cultural_context: str | None = None
-    cards_per_theme: int
-    image_candidates_per_run: int
+    workflow_type: WorkflowType | None = None
+    asset_type: AssetType | None = None
+    style_profile: StyleProfile | None = None
+    requested_candidate_count: int | None = None
     created_at: datetime
-    candidate_count: int = 0
+    generated_candidate_count: int = 0
     selected_candidate_id: str | None = None
     selected_candidate_url: str | None = None
     providers: list[str] = Field(default_factory=list)
@@ -253,6 +356,8 @@ class ModelsProviderInfo(BaseModel):
     workflow_path: str | None = None
     default_candidate_count: int
     models: list[str] = Field(default_factory=list)
+    supported_workflow_types: list[str] = Field(default_factory=list)
+    supported_style_profiles: list[str] = Field(default_factory=list)
     notes: str | None = None
 
 

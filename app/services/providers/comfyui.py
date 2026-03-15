@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import httpx
 
@@ -23,6 +25,14 @@ from app.services.providers.base import (
 class ComfyUIProvider(ImageProvider):
     name = "comfyui"
     CHECKPOINT_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt")
+    DEFAULT_RESOLUTIONS = {
+        "ecard_background": (768, 1152),
+        "ecard_border_frame": (768, 1152),
+        "festival_motif_pack": (768, 768),
+        "hero_illustration": (768, 1152),
+        "supporting_scene": (768, 1152),
+        "bw_sketch_asset": (512, 768),
+    }
 
     def __init__(self, settings: Settings) -> None:
         self.base_url = settings.comfyui_base_url.rstrip("/")
@@ -38,15 +48,23 @@ class ComfyUIProvider(ImageProvider):
         self, request: ProviderRequestContext, prompt_bundle: PromptBundle
     ) -> ProviderRunResult:
         started_at = time.perf_counter()
+        request_started_at = self._utcnow()
         model_name = self._resolved_model_name(request.target_model)
-        workflow_name = self.workflow_path.name
+        workflow_path = self._resolve_workflow_path(request.workflow_type)
+        workflow_name = workflow_path.name
+        width, height = self._resolve_dimensions(
+            request.workflow_type, request.render_spec
+        )
         filename_prefix = f"imageforge_{request.request_id}_{uuid.uuid4().hex[:8]}"
         try:
             prompt = self._prepare_prompt(
+                workflow_path=workflow_path,
                 prompt_bundle=prompt_bundle,
                 filename_prefix=filename_prefix,
                 candidate_count=request.candidate_count,
                 target_model=request.target_model,
+                width=width,
+                height=height,
             )
             async with httpx.AsyncClient(timeout=self.timeout_seconds + 10.0) as client:
                 submit_response = await client.post(
@@ -74,6 +92,11 @@ class ComfyUIProvider(ImageProvider):
                 ok=True,
                 candidates=images,
                 raw_response={"submit": submit_payload, "history": history},
+                status="completed",
+                stage="completed",
+                progress_pct=100,
+                started_at=request_started_at,
+                finished_at=self._utcnow(),
             )
         except Exception as exc:
             return ProviderRunResult(
@@ -87,6 +110,11 @@ class ComfyUIProvider(ImageProvider):
                 error_type=exc.__class__.__name__,
                 error_message=str(exc),
                 raw_response={"error": str(exc)},
+                status="failed",
+                stage="failed",
+                progress_pct=100,
+                started_at=request_started_at,
+                finished_at=self._utcnow(),
             )
 
     async def health_check(self) -> bool:
@@ -102,7 +130,7 @@ class ComfyUIProvider(ImageProvider):
 
     def list_models(self) -> list[str]:
         try:
-            workflow = self._load_workflow()
+            workflow = self._load_workflow(self.workflow_path)
         except Exception:
             return []
 
@@ -126,12 +154,15 @@ class ComfyUIProvider(ImageProvider):
     def _prepare_prompt(
         self,
         *,
+        workflow_path: Path,
         prompt_bundle: PromptBundle,
         filename_prefix: str,
         candidate_count: int,
         target_model: str | None,
+        width: int,
+        height: int,
     ) -> dict[str, Any]:
-        workflow = self._load_workflow()
+        workflow = self._load_workflow(workflow_path)
         if "nodes" in workflow:
             return self._convert_gui_workflow(
                 workflow=workflow,
@@ -139,6 +170,8 @@ class ComfyUIProvider(ImageProvider):
                 filename_prefix=filename_prefix,
                 candidate_count=candidate_count,
                 target_model=target_model,
+                width=width,
+                height=height,
             )
 
         prompt = copy.deepcopy(workflow)
@@ -148,11 +181,13 @@ class ComfyUIProvider(ImageProvider):
             filename_prefix=filename_prefix,
             candidate_count=candidate_count,
             target_model=target_model,
+            width=width,
+            height=height,
         )
         return prompt
 
-    def _load_workflow(self) -> dict[str, Any]:
-        return json.loads(self.workflow_path.read_text(encoding="utf-8"))
+    def _load_workflow(self, workflow_path: Path) -> dict[str, Any]:
+        return json.loads(workflow_path.read_text(encoding="utf-8"))
 
     def _convert_gui_workflow(
         self,
@@ -162,6 +197,8 @@ class ComfyUIProvider(ImageProvider):
         filename_prefix: str,
         candidate_count: int,
         target_model: str | None,
+        width: int,
+        height: int,
     ) -> dict[str, Any]:
         nodes_by_id = {node["id"]: copy.deepcopy(node) for node in workflow.get("nodes", [])}
         self._inject_gui_nodes(
@@ -170,6 +207,8 @@ class ComfyUIProvider(ImageProvider):
             filename_prefix=filename_prefix,
             candidate_count=candidate_count,
             target_model=target_model,
+            width=width,
+            height=height,
         )
 
         link_lookup: dict[tuple[int, int], tuple[int, int]] = {}
@@ -193,6 +232,8 @@ class ComfyUIProvider(ImageProvider):
         filename_prefix: str,
         candidate_count: int,
         target_model: str | None,
+        width: int,
+        height: int,
     ) -> None:
         self._set_widget_value(
             nodes_by_id=nodes_by_id,
@@ -219,6 +260,7 @@ class ComfyUIProvider(ImageProvider):
                 index=2,
                 value=candidate_count,
             )
+        self._set_gui_resolution(nodes_by_id=nodes_by_id, width=width, height=height)
 
         checkpoint_name = self._normalize_checkpoint_name(
             target_model=target_model,
@@ -242,6 +284,8 @@ class ComfyUIProvider(ImageProvider):
         filename_prefix: str,
         candidate_count: int,
         target_model: str | None,
+        width: int,
+        height: int,
     ) -> None:
         positive_node = prompt.get(str(self.positive_node_id))
         negative_node = prompt.get(str(self.negative_node_id))
@@ -257,6 +301,7 @@ class ComfyUIProvider(ImageProvider):
             prompt[str(self.batch_node_id)].setdefault("inputs", {})[
                 "batch_size"
             ] = candidate_count
+        self._set_api_resolution(prompt=prompt, width=width, height=height)
 
         checkpoint_name = self._normalize_checkpoint_name(
             target_model=target_model,
@@ -365,6 +410,32 @@ class ComfyUIProvider(ImageProvider):
         return {"class_type": node_type, "inputs": inputs}
 
     @staticmethod
+    def _set_gui_resolution(
+        *, nodes_by_id: dict[int, dict[str, Any]], width: int, height: int
+    ) -> None:
+        for node in nodes_by_id.values():
+            if node.get("type") != "EmptyLatentImage":
+                continue
+            widgets = node.setdefault("widgets_values", [])
+            while len(widgets) <= 2:
+                widgets.append(None)
+            widgets[0] = width
+            widgets[1] = height
+            break
+
+    @staticmethod
+    def _set_api_resolution(
+        *, prompt: dict[str, Any], width: int, height: int
+    ) -> None:
+        for node in prompt.values():
+            if node.get("class_type") != "EmptyLatentImage":
+                continue
+            inputs = node.setdefault("inputs", {})
+            inputs["width"] = width
+            inputs["height"] = height
+            break
+
+    @staticmethod
     def _set_widget_value(
         *, nodes_by_id: dict[int, dict[str, Any]], node_id: int, index: int, value: Any
     ) -> None:
@@ -415,6 +486,38 @@ class ComfyUIProvider(ImageProvider):
         models = self.list_models()
         return models[0] if models else None
 
+    def _resolve_workflow_path(self, workflow_type: str) -> Path:
+        candidate_path = self.workflow_path.parent / f"{workflow_type}.json"
+        if candidate_path.exists():
+            return candidate_path
+        return self.workflow_path
+
+    def _resolve_dimensions(
+        self, workflow_type: str, render_spec: Mapping[str, Any] | str | None
+    ) -> tuple[int, int]:
+        default_width, default_height = self.DEFAULT_RESOLUTIONS.get(
+            workflow_type, (768, 1152)
+        )
+        if isinstance(render_spec, Mapping):
+            width = render_spec.get("width")
+            height = render_spec.get("height")
+            if isinstance(width, int) and isinstance(height, int):
+                return width, height
+
+            orientation = str(render_spec.get("orientation") or "").strip().lower()
+            if orientation == "square":
+                square_size = min(default_width, default_height)
+                return square_size, square_size
+            if orientation == "landscape":
+                return max(default_width, default_height), min(default_width, default_height)
+            return default_width, default_height
+
+        if render_spec:
+            match = re.search(r"(\d{3,4})\s*[xX]\s*(\d{3,4})", render_spec)
+            if match:
+                return int(match.group(1)), int(match.group(2))
+        return default_width, default_height
+
     @classmethod
     def _display_model_name(cls, model_name: str) -> str:
         lowered = model_name.lower()
@@ -422,3 +525,7 @@ class ComfyUIProvider(ImageProvider):
             if lowered.endswith(suffix):
                 return model_name[: -len(suffix)]
         return model_name
+
+    @staticmethod
+    def _utcnow() -> datetime:
+        return datetime.now(timezone.utc)

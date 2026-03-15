@@ -1,17 +1,19 @@
 # ImageForge
 
-ImageForge is a standalone FastAPI service for local-first image generation. It accepts structured card-image requests, builds provider-agnostic prompts, calls ComfyUI through a saved workflow JSON, stores candidate images on the filesystem, and persists request plus candidate metadata in Postgres.
+ImageForge is a standalone FastAPI asset workflow engine for local-first image generation. It accepts structured workflow-oriented asset requests, builds provider-agnostic prompts, executes ComfyUI workflows from disk, stores generated assets on the filesystem, and persists request plus candidate metadata in Postgres.
 
 ## How It Differs From ContentForge
 
 ContentForge is the text sibling. ImageForge is the image sibling.
 
 - ContentForge produces text candidates.
-- ImageForge produces image candidates.
+- ImageForge produces reusable image asset candidates.
 - ContentForge optimizes language prompts.
 - ImageForge is prepared to accumulate prompt and selection history for later visual optimization.
 
 ImageForge is intentionally not a monolith. It is a separate service that eCardFactory can call after text selection.
+
+ImageForge now creates image assets only. It is not intended to generate final greeting cards with embedded text. eCardFactory owns final readable text layout and final card composition. n8n can orchestrate higher-level asset workflows around ImageForge, but ImageForge remains the execution service for asset generation itself.
 
 ## Current And Future Providers
 
@@ -138,15 +140,32 @@ Quality scaffolding:
 
 ## ComfyUI Workflow Model
 
-ImageForge reads [`workflows/comfyui/ecard_sdxl_basic.json`](/Users/aritrarpal/Documents/workspace_biz/imageforge/workflows/comfyui/ecard_sdxl_basic.json) from disk on each provider run. The provider injects:
+ImageForge reads ComfyUI workflow JSON from disk on each provider run. It resolves workflow execution like this:
+
+- if `workflows/comfyui/<workflow_type>.json` exists, that file is used
+- otherwise it falls back to [`workflows/comfyui/ecard_sdxl_basic.json`](/Users/aritrarpal/Documents/workspace_biz/imageforge/workflows/comfyui/ecard_sdxl_basic.json)
+
+The provider injects:
 
 - positive prompt
 - negative prompt
 - filename prefix
 - candidate batch size
+- low-resolution width and height defaults
 - optional checkpoint/model override
 
 The current workflow file is a normal ComfyUI GUI export. ImageForge converts it into the API prompt format before submission to `/prompt`.
+
+Default workflow resolutions are intentionally lower for speed:
+
+- `ecard_background`: `768x1152`
+- `ecard_border_frame`: `768x1152`
+- `festival_motif_pack`: `768x768`
+- `hero_illustration`: `768x1152`
+- `supporting_scene`: `768x1152`
+- `bw_sketch_asset`: `512x768`
+
+Larger sizes should only be requested explicitly through `render_spec`, for example `render_spec: "premium render, 1024x1536"`.
 
 See [`workflows/comfyui/README.md`](/Users/aritrarpal/Documents/workspace_biz/imageforge/workflows/comfyui/README.md) for the node contract.
 
@@ -173,18 +192,40 @@ Selected asset behavior is explicit:
 
 Recommended client flow for eCardFactory:
 
-1. Call ContentForge for text generation.
-2. Let the user or pipeline choose the final text.
-3. Call `POST /api/images/generate` on ImageForge with the chosen text and theme context.
-4. Check the HTTP status and also check `ok`, `results[].ok`, and `meta.total_candidates`.
-5. Show returned image candidates using their `public_url` values.
-6. Call `POST /api/images/candidates/{candidate_id}/select` for the chosen image.
-7. For additional variants on the same request context, call `POST /api/images/regenerate`.
-8. Render the final composed card in eCardFactory using the selected candidate's canonical asset URL.
+1. Call ContentForge for text generation if text is needed for the final card.
+2. Choose the final text outside ImageForge.
+3. Choose an ImageForge workflow based on the asset you need.
+4. Call `POST /api/images/generate` with workflow-oriented asset request fields.
+5. Check the HTTP status and also check `ok`, `results[].ok`, and `meta.total_candidates`.
+6. Show returned image asset candidates using their `public_url` values.
+7. Call `POST /api/images/candidates/{candidate_id}/select` for the chosen asset.
+8. Compose the final card in eCardFactory by overlaying readable text on top of the selected asset.
 
-ImageForge is intentionally only the image generation and candidate persistence service. It does not implement eCardFactory UI, final rendering, auth, billing, or deployment.
+Recommended default workflow for eCardFactory:
 
-## Request Contract For eCardFactory
+- `workflow_type: "ecard_background"` for reusable card backdrops
+- `asset_type: "background_full"`
+- `style_profile: "soft_color_illustration"`
+- `candidate_count: 3`
+
+ImageForge is intentionally only the image-asset generation and candidate persistence service. It does not implement eCardFactory UI, final rendering, auth, billing, or deployment.
+
+Embedded text generation is not the intended path. If final export/composition later moves into Canva Pro or a similar tool, ImageForge should still remain the asset-generation step.
+
+## n8n Workflow-Level Usage
+
+n8n should orchestrate ImageForge at a workflow level, not by micromanaging raw ComfyUI graph operations.
+
+Recommended n8n pattern:
+
+1. Choose `workflow_type`, `asset_type`, and `style_profile` from business logic.
+2. Call `POST /api/images/generate`.
+3. Poll `GET /api/images/requests/{request_id}` if downstream steps need persisted progress state.
+4. Branch based on request `status`, provider run `status`, and candidate count.
+5. Call `POST /api/images/candidates/{candidate_id}/select` when a preferred asset is chosen.
+6. Hand the selected asset URL into eCardFactory or another composition/export step.
+
+## Request Contract
 
 Example `POST /api/images/generate` payload:
 
@@ -194,10 +235,23 @@ Example `POST /api/images/generate` payload:
   "theme_bucket": "occasion",
   "cultural_context": "indian",
   "selected_text": "Happy Ugadi. Wishing you prosperity, joy and new beginnings.",
+  "workflow_type": "supporting_scene",
+  "asset_type": "hero_illustration",
+  "style_profile": "soft_color_illustration",
   "tone_style": "warm",
   "visual_style": "festive",
-  "cards_per_theme": 10,
-  "image_candidates_per_run": 3,
+  "scene_spec": {
+    "subject": "festive banyan tree courtyard scene",
+    "composition": "supporting scene",
+    "background_intent": "South Indian decor"
+  },
+  "render_spec": {
+    "width": 768,
+    "height": 1152,
+    "orientation": "portrait",
+    "quality_profile": "draft"
+  },
+  "candidate_count": 3,
   "provider_targets": [
     {
       "provider": "comfyui",
@@ -208,7 +262,54 @@ Example `POST /api/images/generate` payload:
 }
 ```
 
-The response returns provider execution metadata plus candidate `public_url` values that eCardFactory can render immediately.
+Supported `workflow_type` values:
+
+- `ecard_background`
+- `ecard_border_frame`
+- `festival_motif_pack`
+- `hero_illustration`
+- `supporting_scene`
+- `bw_sketch_asset`
+
+Supported `asset_type` values:
+
+- `background_full`
+- `border_frame`
+- `hero_illustration`
+- `corner_decoration`
+- `object_pack`
+- `festival_motif`
+
+Supported `style_profile` values:
+
+- `draft_sketch`
+- `bw_line_art`
+- `flat_illustration`
+- `soft_color_illustration`
+- `premium_render`
+
+Request fields used by the prompt builder:
+
+- `theme_name`
+- `theme_bucket`
+- `cultural_context`
+- `selected_text`
+- `workflow_type`
+- `asset_type`
+- `style_profile`
+- `scene_spec`
+- `render_spec`
+- `tone_style`
+- `visual_style`
+
+`scene_spec` and `render_spec` can be either:
+
+- a plain string for quick use
+- a structured object for more specific backend-driven generation
+
+Structured objects are the preferred contract for backend callers.
+
+The response returns provider execution metadata plus candidate `public_url` values that eCardFactory can render immediately as reusable assets for later composition.
 
 Actual generate/regenerate candidate objects include:
 
@@ -224,7 +325,133 @@ Actual generate/regenerate candidate objects include:
 - `height`
 - `created_at`
 
+### Progress Contract
+
+ImageForge now persists coarse request and provider-run progress fields for polling:
+
+- `status`
+- `stage`
+- `progress_pct`
+- `started_at`
+- `finished_at`
+
+These fields are exposed in:
+
+- `POST /api/images/generate`
+- `POST /api/images/regenerate`
+- `GET /api/images/requests`
+- `GET /api/images/requests/{request_id}`
+
 Request detail and candidate list APIs intentionally do not expose absolute filesystem paths.
+
+### Asset-Only Prompt Direction
+
+ImageForge prompts are asset-oriented by default:
+
+- no greeting-card text-space phrasing
+- no implied embedded typography
+- no expectation that the model renders readable card text
+
+Negative prompts explicitly suppress:
+
+- text
+- readable text
+- lettering
+- typography
+
+### Example Asset Payloads
+
+Ugadi `border_frame`:
+
+```json
+{
+  "theme_name": "Ugadi",
+  "theme_bucket": "occasion",
+  "cultural_context": "indian",
+  "selected_text": "Happy Ugadi. Wishing you prosperity, joy and new beginnings.",
+  "workflow_type": "ecard_border_frame",
+  "asset_type": "border_frame",
+  "style_profile": "flat_illustration",
+  "scene_spec": "ornamental festive perimeter with mango leaves toran and rangoli accents",
+  "render_spec": "clean frame geometry, reusable border asset, 768x1152, no embedded typography",
+  "candidate_count": 3,
+  "provider_targets": [
+    {
+      "provider": "comfyui",
+      "model": "sd_xl_base_1.0"
+    }
+  ]
+}
+```
+
+Ugadi `hero_illustration`:
+
+```json
+{
+  "theme_name": "Ugadi",
+  "theme_bucket": "occasion",
+  "cultural_context": "indian",
+  "selected_text": "Happy Ugadi. Wishing you prosperity, joy and new beginnings.",
+  "workflow_type": "hero_illustration",
+  "asset_type": "hero_illustration",
+  "style_profile": "premium_render",
+  "scene_spec": "stylized Ugadi centerpiece with diya glow, mango leaves, and rangoli flourishes",
+  "render_spec": "isolated hero focus, reusable centerpiece asset, 768x1152, no embedded typography",
+  "candidate_count": 3,
+  "provider_targets": [
+    {
+      "provider": "comfyui",
+      "model": "sd_xl_base_1.0"
+    }
+  ]
+}
+```
+
+Birthday `background_full`:
+
+```json
+{
+  "theme_name": "Birthday",
+  "theme_bucket": "celebration",
+  "cultural_context": null,
+  "selected_text": "Happy Birthday. Wishing you joy, laughter, and wonderful memories.",
+  "workflow_type": "ecard_background",
+  "asset_type": "background_full",
+  "style_profile": "soft_color_illustration",
+  "scene_spec": "soft celebratory environment with balloons, confetti, and premium party decor",
+  "render_spec": "full-bleed reusable background, layered depth, 768x1152, no embedded typography",
+  "candidate_count": 3,
+  "provider_targets": [
+    {
+      "provider": "comfyui",
+      "model": "sd_xl_base_1.0"
+    }
+  ]
+}
+```
+
+Banyan tree scene via `hero_illustration` plus `supporting_scene` workflow intent:
+
+```json
+{
+  "theme_name": "Ugadi",
+  "theme_bucket": "occasion",
+  "cultural_context": "indian",
+  "selected_text": "Happy Ugadi. Wishing you prosperity, joy and new beginnings.",
+  "workflow_type": "supporting_scene",
+  "asset_type": "hero_illustration",
+  "style_profile": "soft_color_illustration",
+  "scene_spec": "banyan tree courtyard scene with festive South Indian decor and warm natural light",
+  "render_spec": "illustrative supporting scene asset, layered environment, 768x1152, no embedded typography",
+  "candidate_count": 3,
+  "provider_targets": [
+    {
+      "provider": "comfyui",
+      "model": "sd_xl_base_1.0"
+    }
+  ]
+}
+```
 
 ## Future Optimization Memory Direction
 

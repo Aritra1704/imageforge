@@ -124,7 +124,7 @@
         "Node name for S&R": "CLIPTextEncode"
       },
       "widgets_values": [
-        "minimal greeting card background, soft pastel gradient, elegant stationery design, vertical layout, empty center space for message, premium greeting card aesthetic"
+        "image-only decorative asset, soft pastel gradient, elegant festive illustration, layered visual composition, premium non-typographic design"
       ]
     },
     {
@@ -192,8 +192,8 @@
         "Node name for S&R": "EmptyLatentImage"
       },
       "widgets_values": [
-        1024,
-        1536,
+        768,
+        1152,
         1
       ]
     },
