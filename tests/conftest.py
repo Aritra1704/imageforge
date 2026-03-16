@@ -65,6 +65,7 @@ class InMemoryRepository:
             "style_profile": payload["style_profile"],
             "scene_spec": payload.get("scene_spec"),
             "render_spec": payload.get("render_spec"),
+            "creative_direction": payload.get("creative_direction"),
             "tone_style": payload.get("tone_style"),
             "visual_style": payload.get("visual_style"),
             "candidate_count": payload["candidate_count"],
@@ -374,6 +375,11 @@ def sample_generate_payload() -> dict[str, Any]:
             "subject": "banyan tree courtyard scene",
             "composition": "supporting scene",
             "background_intent": "festive South Indian details",
+        },
+        "creative_direction": {
+            "subject_hint": "banyan tree",
+            "visual_keywords": ["ornamental roots", "warm natural light"],
+            "avoid_keywords": ["busy scene", "poster"],
         },
         "render_spec": {
             "width": 768,

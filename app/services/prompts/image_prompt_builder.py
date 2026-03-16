@@ -6,31 +6,22 @@ from typing import Any, Mapping
 from app.schemas import PromptBundle
 
 
-THEME_MOTIFS = {
-    "ugadi": "festive South Indian decor, mango leaves toran, rangoli accents, diya glow",
-    "ramadan": "crescent moon, lantern glow, deep navy and gold palette, serene evening ambiance",
-    "birthday": "pastel balloons, premium stationery texture, confetti accents, celebratory elegance",
-    "diwali": "warm diya light, marigold details, rangoli flourishes, rich festive glow",
-    "christmas": "soft evergreen details, warm lights, tasteful ornaments, seasonal calm",
-    "new year": "clean celebratory sparkle, refined fireworks glow, premium festive backdrop",
-}
-
 WORKFLOW_TYPE_DESCRIPTORS = {
-    "ecard_background": "background workflow asset for later composition",
-    "ecard_border_frame": "border frame workflow asset for later composition",
-    "festival_motif_pack": "festival motif pack workflow asset",
-    "hero_illustration": "hero illustration workflow asset",
-    "supporting_scene": "supporting scene workflow asset",
-    "bw_sketch_asset": "black and white sketch workflow asset",
+    "ecard_background": "background asset workflow",
+    "ecard_border_frame": "border frame asset workflow",
+    "festival_motif_pack": "motif asset workflow",
+    "hero_illustration": "hero illustration workflow",
+    "supporting_scene": "supporting scene workflow",
+    "bw_sketch_asset": "sketch asset workflow",
 }
 
 ASSET_TYPE_DESCRIPTORS = {
-    "background_full": "full-bleed background asset",
+    "background_full": "full-bleed background illustration asset",
     "border_frame": "ornamental border frame asset",
     "hero_illustration": "hero illustration asset",
     "corner_decoration": "corner decoration asset",
-    "object_pack": "decorative object pack asset",
-    "festival_motif": "festival motif asset",
+    "object_pack": "isolated object illustration asset",
+    "festival_motif": "festival motif illustration asset",
 }
 
 STYLE_PROFILE_DESCRIPTORS = {
@@ -61,10 +52,140 @@ STOP_WORDS = {
     "greeting",
 }
 
-NEGATIVE_PROMPT = (
-    "text, readable text, lettering, typography, watermark, logo, clutter, "
-    "messy composition, distorted typography, low quality, blurry"
+NEGATIVE_PROMPT_TERMS = (
+    "text",
+    "readable text",
+    "lettering",
+    "typography",
+    "watermark",
+    "logo",
+    "clutter",
+    "messy composition",
+    "low quality",
+    "blurry",
+    "collage",
+    "poster",
+    "greeting card",
+    "border",
+    "frame",
+    "multiple objects",
+    "object grid",
+    "decorative layout",
+    "infographic",
+    "page design",
 )
+
+ISOLATED_SUBJECT_ASSET_TYPES = {
+    "hero_illustration",
+    "object_pack",
+}
+
+NEGATIVE_PROMPT_EXCEPTIONS = {
+    "border_frame": {"border", "frame"},
+}
+
+ASSET_MODE_DESCRIPTORS = {
+    "background_full": [
+        "clean background illustration",
+        "plain or very soft background",
+        "no embedded text",
+    ],
+    "border_frame": [
+        "ornamental frame illustration",
+        "empty interior",
+        "no embedded text",
+    ],
+    "hero_illustration": [
+        "single subject illustration",
+        "centered composition",
+        "isolated main subject",
+        "plain or very soft background",
+        "large margin around subject",
+    ],
+    "corner_decoration": [
+        "small decorative corner asset",
+        "isolated ornament",
+        "plain or very soft background",
+    ],
+    "object_pack": [
+        "single subject illustration",
+        "centered composition",
+        "isolated main subject",
+        "plain or very soft background",
+        "large margin around subject",
+        "no collage",
+    ],
+    "festival_motif": [
+        "single festive motif illustration",
+        "isolated decorative subject",
+        "centered composition",
+        "plain or very soft background",
+    ],
+}
+
+
+def _negative_prompt(asset_type: str, creative_direction: Any) -> str:
+    blocked_terms = [
+        term
+        for term in NEGATIVE_PROMPT_TERMS
+        if term not in NEGATIVE_PROMPT_EXCEPTIONS.get(asset_type, set())
+    ]
+    blocked_terms.extend(_creative_avoid_keywords(creative_direction))
+    return ", ".join(dict.fromkeys(blocked_terms))
+
+
+def _workflow_fragment(workflow_type: str) -> str | None:
+    cleaned = _clean_text(workflow_type)
+    if not cleaned:
+        return None
+    return WORKFLOW_TYPE_DESCRIPTORS.get(cleaned, f"{cleaned.replace('_', ' ')} workflow")
+
+
+def _theme_fragments(theme_name: str, theme_bucket: str) -> list[str]:
+    fragments = [f"inspired by {theme_name}"]
+    cleaned_bucket = _clean_text(theme_bucket)
+    if cleaned_bucket:
+        fragments.append(f"{cleaned_bucket} theme context")
+    return fragments
+
+
+def _creative_direction_fragments(creative_direction: Any) -> list[str]:
+    if not creative_direction:
+        return []
+    if not isinstance(creative_direction, Mapping):
+        cleaned = _clean_text(creative_direction)
+        return [cleaned] if cleaned else []
+
+    fragments: list[str] = []
+    motif_hint = _clean_text(creative_direction.get("motif_hint"))
+    subject_hint = _clean_text(creative_direction.get("subject_hint"))
+    if motif_hint:
+        fragments.append(motif_hint)
+    if subject_hint:
+        fragments.append(subject_hint)
+
+    visual_keywords = creative_direction.get("visual_keywords")
+    if isinstance(visual_keywords, list):
+        fragments.extend(
+            keyword for keyword in (_clean_text(item) for item in visual_keywords) if keyword
+        )
+
+    extras = {
+        key: value
+        for key, value in creative_direction.items()
+        if key not in {"motif_hint", "subject_hint", "visual_keywords", "avoid_keywords"}
+    }
+    fragments.extend(_mapping_fragments(extras))
+    return fragments
+
+
+def _creative_avoid_keywords(creative_direction: Any) -> list[str]:
+    if not isinstance(creative_direction, Mapping):
+        return []
+    avoid_keywords = creative_direction.get("avoid_keywords")
+    if not isinstance(avoid_keywords, list):
+        return []
+    return [keyword for keyword in (_clean_text(item) for item in avoid_keywords) if keyword]
 
 
 def _extract_message_hint(selected_text: str) -> str | None:
@@ -123,7 +244,7 @@ def _mapping_fragments(
     return fragments
 
 
-def _scene_spec_fragments(scene_spec: Any) -> list[str]:
+def _scene_spec_fragments(scene_spec: Any, *, asset_type: str) -> list[str]:
     if not scene_spec:
         return []
     if isinstance(scene_spec, str):
@@ -136,10 +257,11 @@ def _scene_spec_fragments(scene_spec: Any) -> list[str]:
         background_intent = _clean_text(scene_spec.get("background_intent"))
         if subject:
             fragments.append(subject)
-        if composition:
-            fragments.append(f"{composition} composition")
-        if background_intent:
-            fragments.append(background_intent)
+        if asset_type not in ISOLATED_SUBJECT_ASSET_TYPES:
+            if composition:
+                fragments.append(f"{composition} composition")
+            if background_intent:
+                fragments.append(background_intent)
 
         extras = {
             key: value
@@ -188,31 +310,22 @@ class ImagePromptBuilder:
         theme_name = str(payload["theme_name"]).strip()
         theme_bucket = str(payload["theme_bucket"]).strip()
         cultural_context = _clean_text(payload.get("cultural_context")) or ""
-        workflow_type = str(payload["workflow_type"]).strip()
+        workflow_type = _clean_text(payload.get("workflow_type")) or ""
         asset_type = str(payload["asset_type"]).strip()
         style_profile = str(payload["style_profile"]).strip()
         scene_spec = payload.get("scene_spec")
         render_spec = payload.get("render_spec")
+        creative_direction = payload.get("creative_direction")
         tone_style = _clean_text(payload.get("tone_style")) or ""
         visual_style = _clean_text(payload.get("visual_style")) or ""
         selected_text = _clean_text(payload.get("selected_text")) or ""
-
-        theme_key = theme_name.lower()
-        motifs = THEME_MOTIFS.get(
-            theme_key,
-            f"tasteful {theme_bucket} symbolism inspired by {theme_name}",
-        )
-
         parts = [
-            "image-only visual asset",
-            WORKFLOW_TYPE_DESCRIPTORS.get(workflow_type, workflow_type),
-            ASSET_TYPE_DESCRIPTORS.get(asset_type, asset_type),
+            "simple reusable illustration asset",
+            _workflow_fragment(workflow_type),
             STYLE_PROFILE_DESCRIPTORS.get(style_profile, style_profile),
-            f"{theme_name} theme",
-            motifs,
-            "clean layered composition",
-            "optimized for fast reusable asset generation",
-            "intended for downstream composition",
+            ASSET_TYPE_DESCRIPTORS.get(asset_type, asset_type),
+            *ASSET_MODE_DESCRIPTORS.get(asset_type, []),
+            *_theme_fragments(theme_name, theme_bucket),
         ]
         if cultural_context:
             parts.append(f"culturally respectful {cultural_context} details")
@@ -220,15 +333,18 @@ class ImagePromptBuilder:
             parts.append(f"{tone_style} tone")
         if visual_style:
             parts.append(f"{visual_style} visual style")
-        parts.extend(_scene_spec_fragments(scene_spec))
+        parts.extend(_creative_direction_fragments(creative_direction))
+        parts.extend(_scene_spec_fragments(scene_spec, asset_type=asset_type))
         parts.extend(_render_spec_fragments(render_spec))
 
         message_hint = _extract_message_hint(selected_text)
         if message_hint:
             parts.append(f"thematic cues from {message_hint}")
 
-        positive_prompt = ", ".join(dict.fromkeys(parts))
+        positive_prompt = ", ".join(
+            dict.fromkeys(part for part in parts if isinstance(part, str) and part)
+        )
         return PromptBundle(
             positive_prompt=positive_prompt,
-            negative_prompt=NEGATIVE_PROMPT,
+            negative_prompt=_negative_prompt(asset_type, creative_direction),
         )

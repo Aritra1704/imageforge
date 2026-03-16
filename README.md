@@ -195,11 +195,12 @@ Recommended client flow for eCardFactory:
 1. Call ContentForge for text generation if text is needed for the final card.
 2. Choose the final text outside ImageForge.
 3. Choose an ImageForge workflow based on the asset you need.
-4. Call `POST /api/images/generate` with workflow-oriented asset request fields.
-5. Check the HTTP status and also check `ok`, `results[].ok`, and `meta.total_candidates`.
-6. Show returned image asset candidates using their `public_url` values.
-7. Call `POST /api/images/candidates/{candidate_id}/select` for the chosen asset.
-8. Compose the final card in eCardFactory by overlaying readable text on top of the selected asset.
+4. Supply `creative_direction` from eCardFactory business logic or DB-backed configuration.
+5. Call `POST /api/images/generate` with workflow-oriented asset request fields plus caller-owned creative direction.
+6. Check the HTTP status and also check `ok`, `results[].ok`, and `meta.total_candidates`.
+7. Show returned image asset candidates using their `public_url` values.
+8. Call `POST /api/images/candidates/{candidate_id}/select` for the chosen asset.
+9. Compose the final card in eCardFactory by overlaying readable text on top of the selected asset.
 
 Recommended default workflow for eCardFactory:
 
@@ -212,13 +213,15 @@ ImageForge is intentionally only the image-asset generation and candidate persis
 
 Embedded text generation is not the intended path. If final export/composition later moves into Canva Pro or a similar tool, ImageForge should still remain the asset-generation step.
 
+Creative catalog ownership stays outside ImageForge. Theme motifs, subject hints, keyword packs, and avoid lists are expected to come from eCardFactory or its upstream configuration.
+
 ## n8n Workflow-Level Usage
 
 n8n should orchestrate ImageForge at a workflow level, not by micromanaging raw ComfyUI graph operations.
 
 Recommended n8n pattern:
 
-1. Choose `workflow_type`, `asset_type`, and `style_profile` from business logic.
+1. Choose `workflow_type`, `asset_type`, `style_profile`, and `creative_direction` from business logic.
 2. Call `POST /api/images/generate`.
 3. Poll `GET /api/images/requests/{request_id}` if downstream steps need persisted progress state.
 4. Branch based on request `status`, provider run `status`, and candidate count.
@@ -240,8 +243,14 @@ Example `POST /api/images/generate` payload:
   "style_profile": "soft_color_illustration",
   "tone_style": "warm",
   "visual_style": "festive",
+  "creative_direction": {
+    "motif_hint": "single rooted centerpiece with seasonal celebration energy",
+    "subject_hint": "banyan tree",
+    "visual_keywords": ["ornamental roots", "warm natural light"],
+    "avoid_keywords": ["poster", "page design"]
+  },
   "scene_spec": {
-    "subject": "festive banyan tree courtyard scene",
+    "subject": "banyan tree courtyard scene",
     "composition": "supporting scene",
     "background_intent": "South Indian decor"
   },
@@ -290,6 +299,10 @@ Supported `style_profile` values:
 
 Request fields used by the prompt builder:
 
+- `creative_direction.motif_hint`
+- `creative_direction.subject_hint`
+- `creative_direction.visual_keywords`
+- `creative_direction.avoid_keywords`
 - `theme_name`
 - `theme_bucket`
 - `cultural_context`
@@ -302,6 +315,8 @@ Request fields used by the prompt builder:
 - `tone_style`
 - `visual_style`
 
+`creative_direction` is the preferred place for eCardFactory to send caller-owned motif and subject guidance. ImageForge does not own a hardcoded theme catalog and falls back only to generic theme phrasing when `creative_direction` is absent.
+
 `scene_spec` and `render_spec` can be either:
 
 - a plain string for quick use
@@ -310,6 +325,8 @@ Request fields used by the prompt builder:
 Structured objects are the preferred contract for backend callers.
 
 The response returns provider execution metadata plus candidate `public_url` values that eCardFactory can render immediately as reusable assets for later composition.
+
+Request detail responses also echo the original `creative_direction` payload back under `request.creative_direction`.
 
 Actual generate/regenerate candidate objects include:
 
@@ -372,7 +389,12 @@ Ugadi `border_frame`:
   "workflow_type": "ecard_border_frame",
   "asset_type": "border_frame",
   "style_profile": "flat_illustration",
-  "scene_spec": "ornamental festive perimeter with mango leaves toran and rangoli accents",
+  "creative_direction": {
+    "motif_hint": "ornamental festive perimeter",
+    "visual_keywords": ["leaf ornament", "soft lamp glow", "clean negative space"],
+    "avoid_keywords": ["poster", "page design"]
+  },
+  "scene_spec": "ornamental border perimeter",
   "render_spec": "clean frame geometry, reusable border asset, 768x1152, no embedded typography",
   "candidate_count": 3,
   "provider_targets": [
@@ -395,7 +417,12 @@ Ugadi `hero_illustration`:
   "workflow_type": "hero_illustration",
   "asset_type": "hero_illustration",
   "style_profile": "premium_render",
-  "scene_spec": "stylized Ugadi centerpiece with diya glow, mango leaves, and rangoli flourishes",
+  "creative_direction": {
+    "subject_hint": "banyan tree",
+    "visual_keywords": ["rooted centerpiece", "soft festive glow"],
+    "avoid_keywords": ["collage", "multiple objects"]
+  },
+  "scene_spec": "stylized banyan tree centerpiece",
   "render_spec": "isolated hero focus, reusable centerpiece asset, 768x1152, no embedded typography",
   "candidate_count": 3,
   "provider_targets": [
@@ -418,7 +445,12 @@ Birthday `background_full`:
   "workflow_type": "ecard_background",
   "asset_type": "background_full",
   "style_profile": "soft_color_illustration",
-  "scene_spec": "soft celebratory environment with balloons, confetti, and premium party decor",
+  "creative_direction": {
+    "motif_hint": "soft celebratory atmosphere",
+    "visual_keywords": ["pastel glow", "subtle confetti texture"],
+    "avoid_keywords": ["poster", "embedded text"]
+  },
+  "scene_spec": "soft celebratory background",
   "render_spec": "full-bleed reusable background, layered depth, 768x1152, no embedded typography",
   "candidate_count": 3,
   "provider_targets": [
@@ -441,7 +473,12 @@ Banyan tree scene via `hero_illustration` plus `supporting_scene` workflow inten
   "workflow_type": "supporting_scene",
   "asset_type": "hero_illustration",
   "style_profile": "soft_color_illustration",
-  "scene_spec": "banyan tree courtyard scene with festive South Indian decor and warm natural light",
+  "creative_direction": {
+    "subject_hint": "banyan tree",
+    "visual_keywords": ["ornamental roots", "warm natural light"],
+    "avoid_keywords": ["greeting card", "object grid"]
+  },
+  "scene_spec": "banyan tree courtyard scene",
   "render_spec": "illustrative supporting scene asset, layered environment, 768x1152, no embedded typography",
   "candidate_count": 3,
   "provider_targets": [

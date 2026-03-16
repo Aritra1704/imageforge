@@ -93,6 +93,37 @@ class RenderSpec(FlexibleSpecModel):
         return cleaned or None
 
 
+class CreativeDirection(FlexibleSpecModel):
+    motif_hint: str | None = None
+    subject_hint: str | None = None
+    visual_keywords: list[str] | None = None
+    avoid_keywords: list[str] | None = None
+
+    @field_validator("motif_hint", "subject_hint", mode="before")
+    @classmethod
+    def _strip_creative_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("visual_keywords", "avoid_keywords", mode="before")
+    @classmethod
+    def _strip_keyword_lists(cls, value: Any) -> Any:
+        if value is None or not isinstance(value, list):
+            return value
+        cleaned_items: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            cleaned = item.strip() if isinstance(item, str) else str(item).strip()
+            if cleaned:
+                cleaned_items.append(cleaned)
+        return cleaned_items or None
+
+
 class ProviderTarget(StrictModel):
     provider: ProviderName
     model: str | None = None
@@ -116,6 +147,13 @@ class GenerateImageRequest(StrictModel):
     style_profile: StyleProfile
     scene_spec: SceneSpec | str | None = None
     render_spec: RenderSpec | str | None = None
+    creative_direction: CreativeDirection | None = Field(
+        default=None,
+        description=(
+            "Caller-supplied creative guidance. Theme motifs and catalog knowledge "
+            "should come from eCardFactory or upstream configuration, not ImageForge."
+        ),
+    )
     tone_style: str | None = None
     visual_style: str | None = None
     candidate_count: int = Field(ge=1)
@@ -238,6 +276,7 @@ class ImageRequestRecord(ProgressFields):
     style_profile: StyleProfile | None = None
     scene_spec: SceneSpec | str | None = None
     render_spec: RenderSpec | str | None = None
+    creative_direction: CreativeDirection | None = None
     tone_style: str | None = None
     visual_style: str | None = None
     candidate_count: int | None = None

@@ -21,6 +21,7 @@ class ProviderRequestContext:
     style_profile: str
     scene_spec: Mapping[str, Any] | str | None
     render_spec: Mapping[str, Any] | str | None
+    creative_direction: Mapping[str, Any] | None
     tone_style: str | None
     visual_style: str | None
     candidate_count: int

@@ -268,6 +268,7 @@ class GenerationService:
                 style_profile=payload.style_profile,
                 scene_spec=_spec_payload(payload.scene_spec),
                 render_spec=_spec_payload(payload.render_spec),
+                creative_direction=_spec_payload(payload.creative_direction),
                 tone_style=payload.tone_style,
                 visual_style=payload.visual_style,
                 candidate_count=payload.candidate_count,
@@ -478,6 +479,7 @@ class GenerationService:
             )
             public_request["scene_spec"] = payload.get("scene_spec")
             public_request["render_spec"] = payload.get("render_spec")
+            public_request["creative_direction"] = payload.get("creative_direction")
             public_request["tone_style"] = payload.get("tone_style")
             public_request["visual_style"] = payload.get("visual_style")
             public_request["candidate_count"] = payload.get("candidate_count") or payload.get(

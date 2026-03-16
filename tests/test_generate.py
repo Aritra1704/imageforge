@@ -58,20 +58,131 @@ def test_request_validation(client, sample_generate_payload):
     assert body["error"]["code"] == "validation_error"
 
 
-def test_prompt_builder_output_shape(sample_generate_payload):
+def test_hero_illustration_prompt_uses_isolated_single_subject_cues(
+    sample_generate_payload,
+):
     builder = ImagePromptBuilder()
     bundle = builder.build(sample_generate_payload)
-    assert "image-only visual asset" in bundle.positive_prompt
-    assert "supporting scene workflow asset" in bundle.positive_prompt
+    assert "simple reusable illustration asset" in bundle.positive_prompt
+    assert "supporting scene workflow" in bundle.positive_prompt
     assert "soft color illustration treatment" in bundle.positive_prompt
-    assert "Ugadi theme" in bundle.positive_prompt
+    assert "hero illustration asset" in bundle.positive_prompt
+    assert "single subject illustration" in bundle.positive_prompt
+    assert "isolated main subject" in bundle.positive_prompt
+    assert "plain or very soft background" in bundle.positive_prompt
+    assert "large margin around subject" in bundle.positive_prompt
+    assert "inspired by Ugadi" in bundle.positive_prompt
+    assert "occasion theme context" in bundle.positive_prompt
     assert "warm tone" in bundle.positive_prompt
     assert "festive visual style" in bundle.positive_prompt
+    assert "banyan tree" in bundle.positive_prompt
+    assert "ornamental roots" in bundle.positive_prompt
+    assert "warm natural light" in bundle.positive_prompt
+    assert "banyan tree courtyard scene" in bundle.positive_prompt
     assert "768x1152" in bundle.positive_prompt
+    assert "supporting scene composition" not in bundle.positive_prompt
+    assert "festive South Indian details" not in bundle.positive_prompt
+    assert "mango leaves toran" not in bundle.positive_prompt
+    assert "rangoli accents" not in bundle.positive_prompt
     assert "greeting card background" not in bundle.positive_prompt
-    assert "clear central text area" not in bundle.positive_prompt
+    assert "clean layered composition" not in bundle.positive_prompt
+
+
+def test_object_pack_prompt_uses_single_object_and_no_collage_cues():
+    builder = ImagePromptBuilder()
+    bundle = builder.build(
+        {
+            "theme_name": "Birthday",
+            "theme_bucket": "occasion",
+            "cultural_context": None,
+            "selected_text": "",
+            "workflow_type": "festival_motif_pack",
+            "asset_type": "object_pack",
+            "style_profile": "flat_illustration",
+            "scene_spec": {
+                "subject": "coffee cup",
+                "composition": "tabletop arrangement",
+                "background_intent": "greeting card background",
+            },
+            "creative_direction": {
+                "subject_hint": "ceramic coffee cup",
+                "visual_keywords": ["matte glaze", "soft shadow"],
+                "avoid_keywords": ["menu board"],
+            },
+            "render_spec": {
+                "width": 768,
+                "height": 768,
+                "orientation": "square",
+                "quality_profile": "draft",
+            },
+            "tone_style": "calm",
+            "visual_style": "minimal",
+        }
+    )
+    assert "isolated object illustration asset" in bundle.positive_prompt
+    assert "single subject illustration" in bundle.positive_prompt
+    assert "isolated main subject" in bundle.positive_prompt
+    assert "large margin around subject" in bundle.positive_prompt
+    assert "no collage" in bundle.positive_prompt
+    assert "ceramic coffee cup" in bundle.positive_prompt
+    assert "matte glaze" in bundle.positive_prompt
+    assert "soft shadow" in bundle.positive_prompt
+    assert "coffee cup" in bundle.positive_prompt
+    assert "tabletop arrangement composition" not in bundle.positive_prompt
+    assert "greeting card background" not in bundle.positive_prompt
+    assert "menu board" in bundle.negative_prompt
+
+
+def test_theme_name_without_creative_direction_uses_generic_fallback():
+    builder = ImagePromptBuilder()
+    bundle = builder.build(
+        {
+            "theme_name": "Ugadi",
+            "theme_bucket": "occasion",
+            "cultural_context": "indian",
+            "selected_text": "",
+            "workflow_type": "festival_motif_pack",
+            "asset_type": "festival_motif",
+            "style_profile": "flat_illustration",
+            "scene_spec": {
+                "subject": "decorative festive emblem",
+                "composition": "centered motif",
+                "background_intent": "plain background",
+            },
+            "render_spec": {
+                "width": 768,
+                "height": 768,
+                "orientation": "square",
+                "quality_profile": "draft",
+            },
+            "tone_style": "festive",
+            "visual_style": "clean",
+        }
+    )
+    assert "inspired by Ugadi" in bundle.positive_prompt
+    assert "occasion theme context" in bundle.positive_prompt
+    assert "mango leaves toran" not in bundle.positive_prompt
+    assert "rangoli accents" not in bundle.positive_prompt
+    assert "diya glow" not in bundle.positive_prompt
+
+
+def test_negative_prompt_blocks_card_poster_and_layout_language(
+    sample_generate_payload,
+):
+    builder = ImagePromptBuilder()
+    bundle = builder.build(sample_generate_payload)
+    assert "text" in bundle.negative_prompt
     assert "readable text" in bundle.negative_prompt
-    assert "watermark" in bundle.negative_prompt
+    assert "poster" in bundle.negative_prompt
+    assert "greeting card" in bundle.negative_prompt
+    assert "border" in bundle.negative_prompt
+    assert "frame" in bundle.negative_prompt
+    assert "busy scene" in bundle.negative_prompt
+    assert "multiple objects" in bundle.negative_prompt
+    assert "object grid" in bundle.negative_prompt
+    assert "decorative layout" in bundle.negative_prompt
+    assert "infographic" in bundle.negative_prompt
+    assert "page design" in bundle.negative_prompt
 
 
 def test_generate_route_with_mocked_provider(client, sample_generate_payload):
@@ -164,6 +275,7 @@ def test_request_detail_exposes_asset_fields(client, sample_generate_payload):
     assert request_payload["style_profile"] == "soft_color_illustration"
     assert request_payload["scene_spec"] == sample_generate_payload["scene_spec"]
     assert request_payload["render_spec"] == sample_generate_payload["render_spec"]
+    assert request_payload["creative_direction"] == sample_generate_payload["creative_direction"]
     assert request_payload["status"] == "completed"
     assert request_payload["progress_pct"] == 100
 
@@ -179,6 +291,12 @@ def test_structured_asset_payload_is_accepted(client):
         "selected_text": "Happy Ugadi. Wishing you prosperity and joy.",
         "tone_style": "festive",
         "visual_style": "traditional festive",
+        "creative_direction": {
+            "motif_hint": "festival lamp with leaf ornament",
+            "subject_hint": "single festive motif",
+            "visual_keywords": ["clean outline", "soft glow"],
+            "avoid_keywords": ["poster", "page design"],
+        },
         "scene_spec": {
             "subject": "mango leaves, diya, festive fruits",
             "composition": "isolated decorative objects",
