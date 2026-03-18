@@ -34,7 +34,7 @@ class Settings(BaseModel):
     comfyui_negative_node_id: int = 4
     comfyui_save_node_id: int = 8
     comfyui_batch_node_id: int | None = 5
-    comfyui_timeout_seconds: int = 180
+    comfyui_timeout_seconds: int = 300
     comfyui_poll_interval_ms: int = 1000
 
     image_storage_backend: str = "filesystem"
