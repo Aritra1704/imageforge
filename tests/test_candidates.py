@@ -25,11 +25,15 @@ def test_candidate_selection_behavior(client, sample_generate_payload, storage):
 
     detail_response = client.get(f"/api/images/requests/{request_id}")
     detail = detail_response.json()
+    assert detail["request"]["recommended_candidate_id"] == detail["candidates"][0]["candidate_id"]
     assert detail["selected_candidate"]["candidate_id"] == second_candidate_id
     assert (
         detail["selected_candidate"]["selected_asset_relative_path"]
         == detail["selected_candidate"]["relative_path"]
     )
+    assert detail["candidates"][0]["rank"] == 1
+    assert detail["candidates"][0]["quality_score"] == 10.0
+    assert detail["candidates"][0]["relevance_score"] == 10.0
     selected_candidates = [candidate for candidate in detail["candidates"] if candidate["is_selected"]]
     assert len(selected_candidates) == 1
     assert selected_candidates[0]["candidate_id"] == second_candidate_id

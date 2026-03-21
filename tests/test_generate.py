@@ -1,18 +1,34 @@
+import io
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.config import Settings
 from app.main import create_app
 from app.schemas import RenderSpec
 from app.services.prompts.image_prompt_builder import ImagePromptBuilder
 from app.services.providers.comfyui import ComfyUIProvider
-from app.services.providers.base import ImageProvider, ProviderRequestContext, ProviderRunResult
+from app.services.providers.base import (
+    ImageProvider,
+    ProviderGeneratedImage,
+    ProviderRequestContext,
+    ProviderRunResult,
+)
 from app.services.providers.openai_dalle import OpenAIDalleProvider
+from app.services.storage.base import StoredImage
+from app.services.storage.filesystem import FilesystemStorage
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _png_bytes(color: tuple[int, int, int] = (120, 90, 180)) -> bytes:
+    image = Image.new("RGB", (640, 960), color=color)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class FailingProvider(ImageProvider):
@@ -46,6 +62,66 @@ class FailingProvider(ImageProvider):
 
     def list_models(self) -> list[str]:
         return ["sd_xl_base_1.0"]
+
+
+class RankingEdgeCaseProvider(ImageProvider):
+    name = "comfyui"
+
+    async def generate_candidates(
+        self, request: ProviderRequestContext, prompt_bundle
+    ) -> ProviderRunResult:
+        started_at = _utcnow()
+        return ProviderRunResult(
+            provider=self.name,
+            model=request.target_model or "sd_xl_base_1.0",
+            workflow_name="ecard_sdxl_basic.json",
+            prompt_used=prompt_bundle.positive_prompt,
+            negative_prompt_used=prompt_bundle.negative_prompt,
+            latency_ms=12,
+            ok=True,
+            candidates=[
+                ProviderGeneratedImage(filename="candidate_a.png", content=_png_bytes((100, 80, 140))),
+                ProviderGeneratedImage(filename="candidate_b.png", content=_png_bytes((110, 80, 140))),
+                ProviderGeneratedImage(filename="candidate_c.png", content=b"not-a-valid-image"),
+            ],
+            raw_response={"mocked": True, "candidate_count": 3},
+            status="completed",
+            stage="completed",
+            progress_pct=100,
+            started_at=started_at,
+            finished_at=_utcnow(),
+        )
+
+    async def health_check(self) -> bool:
+        return True
+
+    def list_models(self) -> list[str]:
+        return ["sd_xl_base_1.0"]
+
+
+class DuplicateMetadataStorage(FilesystemStorage):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._first_metadata: StoredImage | None = None
+        self._save_count = 0
+
+    def save_candidate(self, **kwargs) -> StoredImage:
+        stored = super().save_candidate(**kwargs)
+        self._save_count += 1
+        if self._first_metadata is None:
+            self._first_metadata = stored
+            return stored
+        if self._save_count == 2:
+            return StoredImage(
+                relative_path=self._first_metadata.relative_path,
+                absolute_path=stored.absolute_path,
+                public_url=self._first_metadata.public_url,
+                storage_backend=stored.storage_backend,
+                file_size_bytes=stored.file_size_bytes,
+                width=stored.width,
+                height=stored.height,
+            )
+        return stored
 
 
 def test_request_validation(client, sample_generate_payload):
@@ -185,6 +261,67 @@ def test_negative_prompt_blocks_card_poster_and_layout_language(
     assert "page design" in bundle.negative_prompt
 
 
+def test_comfyui_prompt_preparation_randomizes_sampler_seed(
+    settings,
+    sample_generate_payload,
+):
+    provider = ComfyUIProvider(settings)
+    prompt_bundle = ImagePromptBuilder().build(sample_generate_payload)
+    request = ProviderRequestContext(
+        request_id="imgreq_seed_test",
+        trace_id=str(sample_generate_payload["trace_id"]),
+        theme_name=str(sample_generate_payload["theme_name"]),
+        theme_bucket=str(sample_generate_payload["theme_bucket"]),
+        cultural_context=str(sample_generate_payload["cultural_context"]),
+        selected_text=str(sample_generate_payload["selected_text"]),
+        workflow_type=str(sample_generate_payload["workflow_type"]),
+        asset_type=str(sample_generate_payload["asset_type"]),
+        style_profile=str(sample_generate_payload["style_profile"]),
+        scene_spec=sample_generate_payload["scene_spec"],
+        render_spec=sample_generate_payload["render_spec"],
+        creative_direction=sample_generate_payload["creative_direction"],
+        tone_style=str(sample_generate_payload["tone_style"]),
+        visual_style=str(sample_generate_payload["visual_style"]),
+        candidate_count=int(sample_generate_payload["candidate_count"]),
+        notes=None,
+        target_model=str(sample_generate_payload["provider_targets"][0]["model"]),
+    )
+
+    first_prompt = provider._prepare_prompt(
+        workflow_path=settings.comfyui_workflow_path,
+        prompt_bundle=prompt_bundle,
+        filename_prefix="seed_test_a",
+        candidate_count=request.candidate_count,
+        target_model=request.target_model,
+        width=768,
+        height=1152,
+    )
+    second_prompt = provider._prepare_prompt(
+        workflow_path=settings.comfyui_workflow_path,
+        prompt_bundle=prompt_bundle,
+        filename_prefix="seed_test_b",
+        candidate_count=request.candidate_count,
+        target_model=request.target_model,
+        width=768,
+        height=1152,
+    )
+
+    def sampler_seeds(prompt):
+        seeds = []
+        for node in prompt.values():
+            if node.get("class_type") in {"KSampler", "KSamplerAdvanced"}:
+                seed = node.get("inputs", {}).get("seed")
+                if seed is not None:
+                    seeds.append(seed)
+        return seeds
+
+    first_seeds = sampler_seeds(first_prompt)
+    second_seeds = sampler_seeds(second_prompt)
+    assert first_seeds
+    assert second_seeds
+    assert first_seeds != second_seeds
+
+
 def test_generate_route_with_mocked_provider(client, sample_generate_payload):
     response = client.post("/api/images/generate", json=sample_generate_payload)
     assert response.status_code == 200
@@ -202,10 +339,25 @@ def test_generate_route_with_mocked_provider(client, sample_generate_payload):
     assert result["progress_pct"] == 100
     assert len(result["candidates"]) == 3
     first_candidate = result["candidates"][0]
+    assert first_candidate["request_id"] == body["request_id"]
     assert first_candidate["provider_run_id"].startswith("prun_")
     assert first_candidate["provider"] == "comfyui"
     assert first_candidate["model"] == "sd_xl_base_1.0"
+    assert first_candidate["candidate_index"] == 1
+    assert first_candidate["rank"] == 1
+    assert first_candidate["quality_score"] == 10.0
+    assert first_candidate["relevance_score"] == 10.0
+    assert first_candidate["reason_codes"] == [
+        "provider_success",
+        "valid_asset",
+        "dimensions_present",
+        "prompt_complete",
+        "selected_text_present",
+        "orientation_match",
+    ]
+    assert body["recommended_candidate_id"] == first_candidate["candidate_id"]
     assert body["meta"]["total_candidates"] == 3
+    assert body["meta"]["rejected_candidates"] == 0
 
 
 def test_regenerate_route_with_mocked_provider(client, sample_generate_payload):
@@ -227,10 +379,15 @@ def test_regenerate_route_with_mocked_provider(client, sample_generate_payload):
     assert regenerated["trace_id"] == "ecard-job-regen-001"
     assert regenerated["status"] == "completed"
     assert len(regenerated["results"][0]["candidates"]) == 2
+    assert regenerated["results"][0]["candidates"][0]["request_id"] == request_id
+    assert regenerated["results"][0]["candidates"][0]["rank"] >= 1
+    assert regenerated["recommended_candidate_id"]
 
     candidates_response = client.get(f"/api/images/requests/{request_id}/candidates")
     candidates = candidates_response.json()["candidates"]
     assert len(candidates) == 5
+    assert [candidate["rank"] for candidate in candidates] == [1, 2, 3, 4, 5]
+    assert candidates[0]["candidate_id"] == regenerated["recommended_candidate_id"]
 
 
 def test_generate_returns_non_200_when_all_providers_fail(
@@ -278,6 +435,7 @@ def test_request_detail_exposes_asset_fields(client, sample_generate_payload):
     assert request_payload["creative_direction"] == sample_generate_payload["creative_direction"]
     assert request_payload["status"] == "completed"
     assert request_payload["progress_pct"] == 100
+    assert request_payload["recommended_candidate_id"]
 
 
 def test_structured_asset_payload_is_accepted(client):
@@ -324,6 +482,55 @@ def test_structured_asset_payload_is_accepted(client):
     assert body["ok"] is True
     assert body["results"][0]["ok"] is True
     assert len(body["results"][0]["candidates"]) == 2
+
+
+def test_generate_filters_invalid_and_duplicate_candidates(
+    settings,
+    repository,
+    sample_generate_payload,
+    tmp_path,
+):
+    storage = DuplicateMetadataStorage(
+        root=tmp_path / "imageforge-assets-edge-cases",
+        public_base_url="http://localhost:8090/assets",
+    )
+    storage.ensure_ready()
+    test_settings = settings.model_copy(update={"image_storage_root": storage.root})
+    app = create_app(
+        settings=test_settings,
+        repository=repository,
+        storage=storage,
+        providers={
+            "comfyui": RankingEdgeCaseProvider(),
+            "openai_dalle": OpenAIDalleProvider(),
+        },
+    )
+
+    response = TestClient(app).post("/api/images/generate", json=sample_generate_payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["meta"]["total_candidates"] == 1
+    assert body["meta"]["rejected_candidates"] == 2
+    assert body["recommended_candidate_id"] == body["results"][0]["candidates"][0]["candidate_id"]
+    assert body["results"][0]["status"] == "completed"
+    assert len(body["results"][0]["candidates"]) == 1
+    assert body["results"][0]["candidates"][0]["rank"] == 1
+
+    request_id = body["request_id"]
+    detail_response = TestClient(app).get(f"/api/images/requests/{request_id}")
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["request"]["recommended_candidate_id"] == body["recommended_candidate_id"]
+    assert len(detail["candidates"]) == 1
+    assert detail["candidates"][0]["reason_codes"] == [
+        "provider_success",
+        "valid_asset",
+        "dimensions_present",
+        "prompt_complete",
+        "selected_text_present",
+        "orientation_match",
+    ]
 
 
 def test_comfyui_provider_uses_structured_render_spec_dimensions(tmp_path):

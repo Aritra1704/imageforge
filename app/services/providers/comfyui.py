@@ -260,6 +260,7 @@ class ComfyUIProvider(ImageProvider):
                 index=2,
                 value=candidate_count,
             )
+        self._randomize_gui_sampler_seeds(nodes_by_id=nodes_by_id)
         self._set_gui_resolution(nodes_by_id=nodes_by_id, width=width, height=height)
 
         checkpoint_name = self._normalize_checkpoint_name(
@@ -301,6 +302,7 @@ class ComfyUIProvider(ImageProvider):
             prompt[str(self.batch_node_id)].setdefault("inputs", {})[
                 "batch_size"
             ] = candidate_count
+        self._randomize_api_sampler_seeds(prompt=prompt)
         self._set_api_resolution(prompt=prompt, width=width, height=height)
 
         checkpoint_name = self._normalize_checkpoint_name(
@@ -446,6 +448,31 @@ class ComfyUIProvider(ImageProvider):
         while len(widgets) <= index:
             widgets.append(None)
         widgets[index] = value
+
+    @staticmethod
+    def _new_seed() -> int:
+        return uuid.uuid4().int % (2**63)
+
+    @classmethod
+    def _randomize_gui_sampler_seeds(
+        cls,
+        *,
+        nodes_by_id: dict[int, dict[str, Any]],
+    ) -> None:
+        for node in nodes_by_id.values():
+            if node.get("type") not in {"KSampler", "KSamplerAdvanced"}:
+                continue
+            widgets = node.setdefault("widgets_values", [])
+            while len(widgets) <= 0:
+                widgets.append(None)
+            widgets[0] = cls._new_seed()
+
+    @classmethod
+    def _randomize_api_sampler_seeds(cls, *, prompt: dict[str, Any]) -> None:
+        for node in prompt.values():
+            if node.get("class_type") not in {"KSampler", "KSamplerAdvanced"}:
+                continue
+            node.setdefault("inputs", {})["seed"] = cls._new_seed()
 
     @staticmethod
     def _find_gui_checkpoint_name(nodes_by_id: dict[int, dict[str, Any]]) -> str | None:

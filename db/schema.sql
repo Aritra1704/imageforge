@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS imageforge.image_requests (
     image_candidates_per_run INTEGER NOT NULL,
     candidate_count INTEGER NULL,
     notes TEXT NULL,
+    recommended_candidate_id TEXT NULL,
     status TEXT NOT NULL DEFAULT 'queued',
     stage TEXT NOT NULL DEFAULT 'accepted',
     progress_pct INTEGER NOT NULL DEFAULT 0,
@@ -64,6 +65,10 @@ CREATE TABLE IF NOT EXISTS imageforge.image_candidates (
     file_size_bytes BIGINT NULL,
     width INTEGER NULL,
     height INTEGER NULL,
+    quality_score DOUBLE PRECISION NULL,
+    relevance_score DOUBLE PRECISION NULL,
+    reason_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
+    rank INTEGER NULL,
     is_selected BOOLEAN NOT NULL DEFAULT false,
     selected_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -113,6 +118,8 @@ ALTER TABLE imageforge.image_requests
     ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NULL;
 ALTER TABLE imageforge.image_requests
     ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ NULL;
+ALTER TABLE imageforge.image_requests
+    ADD COLUMN IF NOT EXISTS recommended_candidate_id TEXT NULL;
 
 ALTER TABLE imageforge.image_provider_runs
     ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'queued';
@@ -124,6 +131,15 @@ ALTER TABLE imageforge.image_provider_runs
     ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NULL;
 ALTER TABLE imageforge.image_provider_runs
     ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ NULL;
+
+ALTER TABLE imageforge.image_candidates
+    ADD COLUMN IF NOT EXISTS quality_score DOUBLE PRECISION NULL;
+ALTER TABLE imageforge.image_candidates
+    ADD COLUMN IF NOT EXISTS relevance_score DOUBLE PRECISION NULL;
+ALTER TABLE imageforge.image_candidates
+    ADD COLUMN IF NOT EXISTS reason_codes JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE imageforge.image_candidates
+    ADD COLUMN IF NOT EXISTS rank INTEGER NULL;
 
 CREATE INDEX IF NOT EXISTS idx_image_requests_created_at
     ON imageforge.image_requests (created_at DESC);
@@ -147,6 +163,8 @@ CREATE INDEX IF NOT EXISTS idx_image_candidates_is_selected
     ON imageforge.image_candidates (is_selected);
 CREATE INDEX IF NOT EXISTS idx_image_candidates_created_at
     ON imageforge.image_candidates (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_image_candidates_rank
+    ON imageforge.image_candidates (request_id, rank);
 
 CREATE INDEX IF NOT EXISTS idx_image_feedback_candidate_id
     ON imageforge.image_feedback (candidate_id);

@@ -41,6 +41,13 @@ class RepositoryProtocol(Protocol):
 
     def get_request(self, request_id: str) -> dict[str, Any] | None: ...
 
+    def update_request_recommendation(
+        self,
+        request_id: str,
+        *,
+        recommended_candidate_id: str | None,
+    ) -> dict[str, Any]: ...
+
     def list_requests(
         self,
         *,
@@ -79,6 +86,16 @@ class RepositoryProtocol(Protocol):
     def list_provider_runs(self, request_id: str) -> list[dict[str, Any]]: ...
 
     def create_candidate(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    def update_candidate_analysis(
+        self,
+        candidate_id: str,
+        *,
+        quality_score: float | None,
+        relevance_score: float | None,
+        reason_codes: list[str],
+        rank: int | None,
+    ) -> dict[str, Any]: ...
 
     def list_candidates(self, request_id: str) -> list[dict[str, Any]]: ...
 
@@ -246,6 +263,24 @@ class PostgresImageRepository:
         """
         with self._connect() as conn:
             return conn.execute(query, (request_id,)).fetchone()
+
+    def update_request_recommendation(
+        self,
+        request_id: str,
+        *,
+        recommended_candidate_id: str | None,
+    ) -> dict[str, Any]:
+        query = """
+            UPDATE imageforge.image_requests
+            SET recommended_candidate_id = %s
+            WHERE request_id = %s
+            RETURNING *
+        """
+        with self._connect() as conn:
+            return conn.execute(
+                query,
+                (recommended_candidate_id, request_id),
+            ).fetchone()
 
     def list_requests(
         self,
@@ -480,9 +515,13 @@ class PostgresImageRepository:
                 file_size_bytes,
                 width,
                 height,
+                quality_score,
+                relevance_score,
+                reason_codes,
+                rank,
                 is_selected
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             RETURNING *
         """
@@ -505,7 +544,41 @@ class PostgresImageRepository:
                     payload.get("file_size_bytes"),
                     payload.get("width"),
                     payload.get("height"),
+                    payload.get("quality_score"),
+                    payload.get("relevance_score"),
+                    Jsonb(payload.get("reason_codes") or []),
+                    payload.get("rank"),
                     payload.get("is_selected", False),
+                ),
+            ).fetchone()
+
+    def update_candidate_analysis(
+        self,
+        candidate_id: str,
+        *,
+        quality_score: float | None,
+        relevance_score: float | None,
+        reason_codes: list[str],
+        rank: int | None,
+    ) -> dict[str, Any]:
+        query = """
+            UPDATE imageforge.image_candidates
+            SET quality_score = %s,
+                relevance_score = %s,
+                reason_codes = %s,
+                rank = %s
+            WHERE candidate_id = %s
+            RETURNING *
+        """
+        with self._connect() as conn:
+            return conn.execute(
+                query,
+                (
+                    quality_score,
+                    relevance_score,
+                    Jsonb(reason_codes),
+                    rank,
+                    candidate_id,
                 ),
             ).fetchone()
 
@@ -514,7 +587,7 @@ class PostgresImageRepository:
             SELECT *
             FROM imageforge.image_candidates
             WHERE request_id = %s
-            ORDER BY created_at ASC, candidate_index ASC
+            ORDER BY rank ASC NULLS LAST, created_at ASC, candidate_index ASC
         """
         with self._connect() as conn:
             return conn.execute(query, (request_id,)).fetchall()

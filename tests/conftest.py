@@ -70,6 +70,7 @@ class InMemoryRepository:
             "visual_style": payload.get("visual_style"),
             "candidate_count": payload["candidate_count"],
             "notes": payload.get("notes"),
+            "recommended_candidate_id": None,
             "status": "queued",
             "stage": "accepted",
             "progress_pct": 0,
@@ -101,6 +102,16 @@ class InMemoryRepository:
 
     def get_request(self, request_id: str) -> dict[str, Any] | None:
         return self.requests.get(request_id)
+
+    def update_request_recommendation(
+        self,
+        request_id: str,
+        *,
+        recommended_candidate_id: str | None,
+    ) -> dict[str, Any]:
+        row = self.requests[request_id]
+        row["recommended_candidate_id"] = recommended_candidate_id
+        return row
 
     def list_requests(
         self,
@@ -216,15 +227,42 @@ class InMemoryRepository:
     def create_candidate(self, payload: dict[str, Any]) -> dict[str, Any]:
         row = {
             **payload,
+            "quality_score": payload.get("quality_score"),
+            "relevance_score": payload.get("relevance_score"),
+            "reason_codes": list(payload.get("reason_codes") or []),
+            "rank": payload.get("rank"),
             "selected_at": None,
             "created_at": _utcnow(),
         }
         self.candidates[payload["candidate_id"]] = row
         return row
 
+    def update_candidate_analysis(
+        self,
+        candidate_id: str,
+        *,
+        quality_score: float | None,
+        relevance_score: float | None,
+        reason_codes: list[str],
+        rank: int | None,
+    ) -> dict[str, Any]:
+        row = self.candidates[candidate_id]
+        row["quality_score"] = quality_score
+        row["relevance_score"] = relevance_score
+        row["reason_codes"] = list(reason_codes)
+        row["rank"] = rank
+        return row
+
     def list_candidates(self, request_id: str) -> list[dict[str, Any]]:
         rows = [row for row in self.candidates.values() if row["request_id"] == request_id]
-        rows.sort(key=lambda row: (row["created_at"], row["candidate_index"]))
+        rows.sort(
+            key=lambda row: (
+                row["rank"] is None,
+                row["rank"] if row["rank"] is not None else 10**9,
+                row["created_at"],
+                row["candidate_index"],
+            )
+        )
         return rows
 
     def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:

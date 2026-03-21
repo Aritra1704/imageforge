@@ -227,15 +227,20 @@ class ErrorEnvelope(BaseModel):
 
 class GeneratedCandidateResponse(BaseModel):
     candidate_id: str
+    request_id: str
     provider_run_id: str
     provider: str
     model: str | None = None
-    candidate_index: int
+    candidate_index: int = Field(ge=1)
     relative_path: str
     public_url: str
     is_selected: bool
     width: int | None = None
     height: int | None = None
+    quality_score: float | None = None
+    relevance_score: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    rank: int | None = None
     created_at: datetime
 
 
@@ -260,6 +265,7 @@ class GenerationResponse(ProgressFields):
     ok: bool
     request_id: str
     trace_id: str | None = None
+    recommended_candidate_id: str | None = None
     results: list[ProviderExecutionResponse]
     meta: dict[str, Any]
 
@@ -281,6 +287,7 @@ class ImageRequestRecord(ProgressFields):
     visual_style: str | None = None
     candidate_count: int | None = None
     notes: str | None = None
+    recommended_candidate_id: str | None = None
     request_payload_json: dict[str, Any]
     created_at: datetime
 
@@ -318,6 +325,10 @@ class ImageCandidateRecord(BaseModel):
     file_size_bytes: int | None = None
     width: int | None = None
     height: int | None = None
+    quality_score: float | None = None
+    relevance_score: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    rank: int | None = None
     is_selected: bool
     selected_at: datetime | None = None
     created_at: datetime
