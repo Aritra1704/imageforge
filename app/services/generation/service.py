@@ -267,6 +267,7 @@ class GenerationService:
                 cultural_context=payload.cultural_context,
                 selected_text=payload.selected_text,
                 workflow_type=payload.workflow_type,
+                asset_role=payload.asset_role,
                 asset_type=payload.asset_type,
                 style_profile=payload.style_profile,
                 scene_spec=_spec_payload(payload.scene_spec),
@@ -780,6 +781,10 @@ class GenerationService:
                 "workflow_type",
                 GenerationService._infer_workflow_type(payload),
             )
+            public_request["asset_role"] = payload.get(
+                "asset_role",
+                GenerationService._infer_asset_role(payload),
+            )
             public_request["asset_type"] = payload.get("asset_type")
             public_request["style_profile"] = payload.get(
                 "style_profile", "soft_color_illustration"
@@ -816,6 +821,8 @@ class GenerationService:
         payload = dict(row["request_payload_json"])
         if not payload.get("workflow_type"):
             payload["workflow_type"] = GenerationService._infer_workflow_type(payload)
+        if not payload.get("asset_role"):
+            payload["asset_role"] = GenerationService._infer_asset_role(payload)
         if not payload.get("style_profile"):
             payload["style_profile"] = "soft_color_illustration"
         if not payload.get("candidate_count"):
@@ -827,7 +834,14 @@ class GenerationService:
 
     @staticmethod
     def _infer_workflow_type(payload: dict[str, Any]) -> str:
+        asset_role = str(payload.get("asset_role") or "").strip()
         asset_type = str(payload.get("asset_type") or "").strip()
+        if asset_role == "spot_illustration":
+            return "ecard_spot_illustration_v1"
+        if asset_role == "background":
+            return "ecard_soft_background_v1"
+        if asset_role == "motif":
+            return "festival_motif_pack"
         if asset_type == "background_full":
             return "ecard_background"
         if asset_type == "border_frame":
@@ -842,3 +856,13 @@ class GenerationService:
         if str(payload.get("composition_role") or "").strip() == "supporting_scene":
             return "supporting_scene"
         return "hero_illustration"
+
+    @staticmethod
+    def _infer_asset_role(payload: dict[str, Any]) -> str:
+        asset_type = str(payload.get("asset_type") or "").strip()
+        workflow_type = str(payload.get("workflow_type") or "").strip()
+        if workflow_type == "ecard_soft_background_v1" or asset_type == "background_full":
+            return "background"
+        if asset_type == "festival_motif":
+            return "motif"
+        return "spot_illustration"

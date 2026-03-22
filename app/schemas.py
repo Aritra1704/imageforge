@@ -9,12 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serial
 ProviderName = Literal["comfyui", "openai_dalle"]
 WorkflowType = Literal[
     "ecard_background",
+    "ecard_spot_illustration_v1",
+    "ecard_soft_background_v1",
     "ecard_border_frame",
     "festival_motif_pack",
     "hero_illustration",
     "supporting_scene",
     "bw_sketch_asset",
 ]
+AssetRole = Literal["spot_illustration", "background", "motif"]
 AssetType = Literal[
     "background_full",
     "border_frame",
@@ -143,6 +146,7 @@ class GenerateImageRequest(StrictModel):
     cultural_context: str | None = None
     selected_text: str | None = None
     workflow_type: WorkflowType
+    asset_role: AssetRole = "spot_illustration"
     asset_type: AssetType
     style_profile: StyleProfile
     scene_spec: SceneSpec | str | None = None
@@ -167,6 +171,7 @@ class GenerateImageRequest(StrictModel):
         "cultural_context",
         "selected_text",
         "workflow_type",
+        "asset_role",
         "asset_type",
         "style_profile",
         "tone_style",
@@ -278,6 +283,7 @@ class ImageRequestRecord(ProgressFields):
     cultural_context: str | None = None
     selected_text: str | None = None
     workflow_type: WorkflowType | None = None
+    asset_role: AssetRole | None = None
     asset_type: AssetType | None = None
     style_profile: StyleProfile | None = None
     scene_spec: SceneSpec | str | None = None
@@ -355,6 +361,7 @@ class RequestSummaryRecord(ProgressFields):
     theme_bucket: str
     cultural_context: str | None = None
     workflow_type: WorkflowType | None = None
+    asset_role: AssetRole | None = None
     asset_type: AssetType | None = None
     style_profile: StyleProfile | None = None
     requested_candidate_count: int | None = None

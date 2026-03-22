@@ -140,11 +140,15 @@ def test_hero_illustration_prompt_uses_isolated_single_subject_cues(
     builder = ImagePromptBuilder()
     bundle = builder.build(sample_generate_payload)
     assert "simple reusable illustration asset" in bundle.positive_prompt
-    assert "supporting scene workflow" in bundle.positive_prompt
+    assert "ecard spot illustration workflow" in bundle.positive_prompt
     assert "soft color illustration treatment" in bundle.positive_prompt
     assert "hero illustration asset" in bundle.positive_prompt
+    assert "spot illustration asset for card composition" in bundle.positive_prompt
     assert "single subject illustration" in bundle.positive_prompt
+    assert "single focal subject" in bundle.positive_prompt
     assert "isolated main subject" in bundle.positive_prompt
+    assert "clear negative space for card copy" in bundle.positive_prompt
+    assert "not full bleed" in bundle.positive_prompt
     assert "plain or very soft background" in bundle.positive_prompt
     assert "large margin around subject" in bundle.positive_prompt
     assert "inspired by Ugadi" in bundle.positive_prompt
@@ -154,9 +158,9 @@ def test_hero_illustration_prompt_uses_isolated_single_subject_cues(
     assert "banyan tree" in bundle.positive_prompt
     assert "ornamental roots" in bundle.positive_prompt
     assert "warm natural light" in bundle.positive_prompt
-    assert "banyan tree courtyard scene" in bundle.positive_prompt
+    assert "banyan tree courtyard illustration" in bundle.positive_prompt
     assert "768x1152" in bundle.positive_prompt
-    assert "supporting scene composition" not in bundle.positive_prompt
+    assert "single subject with negative space composition" not in bundle.positive_prompt
     assert "festive South Indian details" not in bundle.positive_prompt
     assert "mango leaves toran" not in bundle.positive_prompt
     assert "rangoli accents" not in bundle.positive_prompt
@@ -275,6 +279,7 @@ def test_comfyui_prompt_preparation_randomizes_sampler_seed(
         cultural_context=str(sample_generate_payload["cultural_context"]),
         selected_text=str(sample_generate_payload["selected_text"]),
         workflow_type=str(sample_generate_payload["workflow_type"]),
+        asset_role=str(sample_generate_payload["asset_role"]),
         asset_type=str(sample_generate_payload["asset_type"]),
         style_profile=str(sample_generate_payload["style_profile"]),
         scene_spec=sample_generate_payload["scene_spec"],
@@ -427,7 +432,8 @@ def test_request_detail_exposes_asset_fields(client, sample_generate_payload):
     request_id = generate_response.json()["request_id"]
     detail_response = client.get(f"/api/images/requests/{request_id}")
     request_payload = detail_response.json()["request"]
-    assert request_payload["workflow_type"] == "supporting_scene"
+    assert request_payload["workflow_type"] == "ecard_spot_illustration_v1"
+    assert request_payload["asset_role"] == "spot_illustration"
     assert request_payload["asset_type"] == "hero_illustration"
     assert request_payload["style_profile"] == "soft_color_illustration"
     assert request_payload["scene_spec"] == sample_generate_payload["scene_spec"]
@@ -441,6 +447,7 @@ def test_request_detail_exposes_asset_fields(client, sample_generate_payload):
 def test_structured_asset_payload_is_accepted(client):
     payload = {
         "workflow_type": "festival_motif_pack",
+        "asset_role": "motif",
         "asset_type": "festival_motif",
         "style_profile": "flat_illustration",
         "theme_name": "Ugadi",

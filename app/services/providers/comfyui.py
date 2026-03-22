@@ -27,6 +27,8 @@ class ComfyUIProvider(ImageProvider):
     CHECKPOINT_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt")
     DEFAULT_RESOLUTIONS = {
         "ecard_background": (768, 1152),
+        "ecard_spot_illustration_v1": (768, 1152),
+        "ecard_soft_background_v1": (768, 1152),
         "ecard_border_frame": (768, 1152),
         "festival_motif_pack": (768, 768),
         "hero_illustration": (768, 1152),

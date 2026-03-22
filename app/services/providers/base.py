@@ -17,6 +17,7 @@ class ProviderRequestContext:
     cultural_context: str | None
     selected_text: str | None
     workflow_type: str
+    asset_role: str
     asset_type: str
     style_profile: str
     scene_spec: Mapping[str, Any] | str | None

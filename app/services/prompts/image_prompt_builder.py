@@ -8,6 +8,8 @@ from app.schemas import PromptBundle
 
 WORKFLOW_TYPE_DESCRIPTORS = {
     "ecard_background": "background asset workflow",
+    "ecard_spot_illustration_v1": "ecard spot illustration workflow",
+    "ecard_soft_background_v1": "ecard soft background workflow",
     "ecard_border_frame": "border frame asset workflow",
     "festival_motif_pack": "motif asset workflow",
     "hero_illustration": "hero illustration workflow",
@@ -30,6 +32,25 @@ STYLE_PROFILE_DESCRIPTORS = {
     "flat_illustration": "flat illustration treatment",
     "soft_color_illustration": "soft color illustration treatment",
     "premium_render": "premium render treatment",
+}
+
+ASSET_ROLE_DESCRIPTORS = {
+    "spot_illustration": [
+        "spot illustration asset for card composition",
+        "single focal subject",
+        "clear negative space for card copy",
+        "not full bleed",
+    ],
+    "background": [
+        "soft atmospheric background asset",
+        "subtle low-detail backdrop",
+        "large open space for overlay text",
+    ],
+    "motif": [
+        "small decorative motif asset",
+        "isolated ornament",
+        "designed to layer into a larger composition",
+    ],
 }
 
 STOP_WORDS = {
@@ -73,6 +94,9 @@ NEGATIVE_PROMPT_TERMS = (
     "decorative layout",
     "infographic",
     "page design",
+    "full card design",
+    "full bleed poster",
+    "headline area",
 )
 
 ISOLATED_SUBJECT_ASSET_TYPES = {
@@ -274,6 +298,17 @@ def _scene_spec_fragments(scene_spec: Any, *, asset_type: str) -> list[str]:
     return [cleaned] if cleaned else []
 
 
+def _asset_role(value: Any, *, asset_type: str) -> str:
+    cleaned = _clean_text(value)
+    if cleaned:
+        return cleaned
+    if asset_type == "background_full":
+        return "background"
+    if asset_type == "festival_motif":
+        return "motif"
+    return "spot_illustration"
+
+
 def _render_spec_fragments(render_spec: Any) -> list[str]:
     if not render_spec:
         return []
@@ -312,6 +347,7 @@ class ImagePromptBuilder:
         cultural_context = _clean_text(payload.get("cultural_context")) or ""
         workflow_type = _clean_text(payload.get("workflow_type")) or ""
         asset_type = str(payload["asset_type"]).strip()
+        asset_role = _asset_role(payload.get("asset_role"), asset_type=asset_type)
         style_profile = str(payload["style_profile"]).strip()
         scene_spec = payload.get("scene_spec")
         render_spec = payload.get("render_spec")
@@ -324,6 +360,7 @@ class ImagePromptBuilder:
             _workflow_fragment(workflow_type),
             STYLE_PROFILE_DESCRIPTORS.get(style_profile, style_profile),
             ASSET_TYPE_DESCRIPTORS.get(asset_type, asset_type),
+            *ASSET_ROLE_DESCRIPTORS.get(asset_role, []),
             *ASSET_MODE_DESCRIPTORS.get(asset_type, []),
             *_theme_fragments(theme_name, theme_bucket),
         ]
